@@ -12,6 +12,9 @@ bird that was really there.
 
 BEX is a local app (Streamlit) plus a command line. It processes local audio.
 
+**[Take the tour →](TOUR.md)** A page-by-page walk through the app, with
+screenshots.
+
 ## What's in the app
 
 - **Explorer** — one recording at a time: a navigator over the whole recording
