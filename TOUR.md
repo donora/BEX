@@ -88,6 +88,26 @@ The standard precision–recall picture. The lines use one threshold for every
 species; the markers show where your per-species thresholds actually put each
 model.
 
+![What each model would tell you was there](docs/tour/compare-species-lists.png)
+
+**What each model would tell you was in a recording**: the species list a
+biodiversity survey would take from it. A model lists a species when it detects
+it in the recording (once, or as many times as you choose). The green bar is how
+many species are annotated in an average recording. Each model's bar stacks what
+its list would make of them. Up to the dashed line are the species that are
+there: named (blue), named only without the location filter (purple), or missed
+(grey). Above it are species it would list that are not there (orange), or that
+its filter removes (light grey).
+
+Here every model names only about 6 of the 10 species in a recording. BirdNET's
+short lists are nearly all right; Perch lists more, and much of the excess is
+removed by the plausibility filter.
+
+![One recording's species lists](docs/tour/compare-recording-list.png)
+
+Or one recording at a time: the species annotated, and exactly what each model
+would have told you was there.
+
 ![Species by species, side by side](docs/tour/compare-species.png)
 
 Where the models differ, bird by bird.
