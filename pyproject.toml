@@ -1,6 +1,6 @@
 [project]
 name = "bex-bioacoustics"
-version = "1.0.0"
+version = "1.0.1"
 description = "BEX, the Bioacoustics Explorer: benchmark bioacoustic ID models on your own recordings, with the geographic filter made visible"
 readme = "README.md"
 requires-python = ">=3.12"
