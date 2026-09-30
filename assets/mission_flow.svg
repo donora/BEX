@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 400" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">How BEX turns recordings into a benchmarked pipeline</title>
+  <desc id="d">Recordings, with an annotated sample as ground truth, run through several models in parallel. Each model is scored against the ground truth, the scores are compared on equal terms, and the result is a chosen, benchmarked pipeline that the rest of the recordings then go through.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8a8880"/>
+    </marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6a63"/>
+    </marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3e6a6b"/>
+    </marker>
+  </defs>
+
+  <!-- card, so the diagram reads on light and dark themes alike -->
+  <rect x="0" y="0" width="1120" height="400" rx="14" fill="#fcfcfb"/>
+
+  <!-- step headers, with the tab each step lives on -->
+  <g font-size="13" font-weight="600" fill="#3a3a35">
+    <text x="95" y="30" text-anchor="middle">1 · Bring your data</text>
+    <text x="310" y="30" text-anchor="middle">2 · Run models</text>
+    <text x="530" y="30" text-anchor="middle">3 · Explore each</text>
+    <text x="750" y="30" text-anchor="middle">4 · Compare</text>
+    <text x="990" y="30" text-anchor="middle">5 · Decide &amp; apply</text>
+  </g>
+  <g font-size="10.5" fill="#8a8880">
+    <text x="95" y="46" text-anchor="middle">Recordings</text>
+    <text x="310" y="46" text-anchor="middle">Models · Explorer</text>
+    <text x="530" y="46" text-anchor="middle">Tune Thresholds</text>
+    <text x="750" y="46" text-anchor="middle">Compare · Species scorecard</text>
+    <text x="990" y="46" text-anchor="middle">Thresholds → saved sets</text>
+  </g>
+
+  <!-- 1 · recordings, and the annotated sample -->
+  <rect x="20" y="118" width="150" height="64" rx="10" fill="#ffffff" stroke="#d8d7d2" stroke-width="1.5"/>
+  <text x="95" y="146" text-anchor="middle" font-size="14" font-weight="600" fill="#1d1b17">Your recordings</text>
+  <text x="95" y="165" text-anchor="middle" font-size="11" fill="#5a5a54">audio, sites, times</text>
+
+  <rect x="20" y="268" width="150" height="64" rx="10" fill="#f2f1ec" stroke="#6b6a63" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="95" y="295" text-anchor="middle" font-size="14" font-weight="600" fill="#1d1b17">Annotate a sample</text>
+  <text x="95" y="314" text-anchor="middle" font-size="11" fill="#5a5a54">the ground truth</text>
+  <line x1="95" y1="182" x2="95" y2="264" stroke="#6b6a63" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#g)"/>
+
+  <!-- fan-out to the models -->
+  <g stroke="#8a8880" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <path d="M170,150 C200,150 200,88 226,88"/>
+    <path d="M170,150 L226,150"/>
+    <path d="M170,150 C200,150 200,212 226,212"/>
+  </g>
+
+  <!-- 2 · models, in parallel -->
+  <g font-size="13" font-weight="600" fill="#1d1b17" text-anchor="middle">
+    <rect x="230" y="64" width="160" height="48" rx="10" fill="#e6efec" stroke="#3e6a6b" stroke-width="1.5"/>
+    <text x="310" y="85">BirdNET</text>
+    <text x="310" y="102" font-size="10.5" font-weight="400" fill="#5a5a54">3 s windows · geofilter</text>
+    <rect x="230" y="126" width="160" height="48" rx="10" fill="#e6efec" stroke="#3e6a6b" stroke-width="1.5"/>
+    <text x="310" y="147">Perch</text>
+    <text x="310" y="164" font-size="10.5" font-weight="400" fill="#5a5a54">5 s windows · no filter</text>
+    <rect x="230" y="188" width="160" height="48" rx="10" fill="#ffffff" stroke="#3e6a6b" stroke-width="1.5" stroke-dasharray="5 3"/>
+    <text x="310" y="209">Other/Custom Models</text>
+    <text x="310" y="226" font-size="10.5" font-weight="400" fill="#5a5a54">[window hop] · [geofilter]</text>
+  </g>
+
+  <!-- models to per-model scoring -->
+  <g stroke="#8a8880" stroke-width="1.5" marker-end="url(#a)">
+    <line x1="390" y1="88" x2="446" y2="88"/>
+    <line x1="390" y1="150" x2="446" y2="150"/>
+    <line x1="390" y1="212" x2="446" y2="212"/>
+  </g>
+
+  <!-- 3 · per-model scoring -->
+  <g font-size="12" font-weight="600" fill="#1d1b17" text-anchor="middle">
+    <rect x="450" y="64" width="160" height="48" rx="10" fill="#ffffff" stroke="#d8d7d2" stroke-width="1.5"/>
+    <text x="530" y="85">precision · recall</text>
+    <text x="530" y="102" font-size="10.5" font-weight="400" fill="#5a5a54">per-species statistics/biases</text>
+    <rect x="450" y="126" width="160" height="48" rx="10" fill="#ffffff" stroke="#d8d7d2" stroke-width="1.5"/>
+    <text x="530" y="147">precision · recall</text>
+    <text x="530" y="164" font-size="10.5" font-weight="400" fill="#5a5a54">per-species statistics/biases</text>
+    <rect x="450" y="188" width="160" height="48" rx="10" fill="#ffffff" stroke="#d8d7d2" stroke-width="1.5"/>
+    <text x="530" y="209">precision · recall</text>
+    <text x="530" y="226" font-size="10.5" font-weight="400" fill="#5a5a54">per-species statistics/biases</text>
+  </g>
+
+  <!-- ground truth feeds every score -->
+  <path d="M170,300 L530,300 L530,240" fill="none" stroke="#6b6a63" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#g)"/>
+  <text x="350" y="292" text-anchor="middle" font-size="11" fill="#5a5a54">every model scored against the ground truth</text>
+
+  <!-- converge into the comparison -->
+  <g stroke="#8a8880" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <path d="M610,88 C640,88 640,130 666,130"/>
+    <path d="M610,150 L666,150"/>
+    <path d="M610,212 C640,212 640,170 666,170"/>
+  </g>
+
+  <!-- 4 · comparison -->
+  <rect x="670" y="96" width="160" height="108" rx="10" fill="#ffffff" stroke="#3a3a35" stroke-width="1.5"/>
+  <text x="750" y="128" text-anchor="middle" font-size="14" font-weight="600" fill="#1d1b17">Cross-model</text>
+  <text x="750" y="146" text-anchor="middle" font-size="14" font-weight="600" fill="#1d1b17">comparison</text>
+  <text x="750" y="168" text-anchor="middle" font-size="10.5" fill="#5a5a54">performance · geofilter reliance</text>
+  <text x="750" y="183" text-anchor="middle" font-size="10.5" fill="#5a5a54">species biases</text>
+
+  <line x1="830" y1="150" x2="886" y2="150" stroke="#3e6a6b" stroke-width="2" marker-end="url(#b)"/>
+
+  <!-- 5 · the benchmarked pipeline -->
+  <rect x="890" y="96" width="200" height="108" rx="10" fill="#3e6a6b"/>
+  <text x="990" y="124" text-anchor="middle" font-size="14" font-weight="600" fill="#ffffff">A benchmarked pipeline</text>
+  <text x="990" y="146" text-anchor="middle" font-size="11" fill="#e6efec">model + thresholds + filter</text>
+  <text x="990" y="163" text-anchor="middle" font-size="11" fill="#e6efec">with known precision and</text>
+  <text x="990" y="180" text-anchor="middle" font-size="11" fill="#e6efec">recall for every species</text>
+
+  <!-- the rest of the data goes through it -->
+  <rect x="670" y="300" width="160" height="56" rx="10" fill="#ffffff" stroke="#d8d7d2" stroke-width="1.5"/>
+  <text x="750" y="324" text-anchor="middle" font-size="13" font-weight="600" fill="#1d1b17">The rest of your</text>
+  <text x="750" y="341" text-anchor="middle" font-size="13" font-weight="600" fill="#1d1b17">recordings</text>
+  <line x1="830" y1="328" x2="886" y2="328" stroke="#3e6a6b" stroke-width="2" marker-end="url(#b)"/>
+  <line x1="990" y1="204" x2="990" y2="296" stroke="#3e6a6b" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#b)"/>
+  <text x="998" y="258" font-size="10.5" fill="#2f5657">applied to</text>
+  <rect x="890" y="300" width="200" height="56" rx="10" fill="#e6efec" stroke="#3e6a6b" stroke-width="1.5"/>
+  <text x="990" y="324" text-anchor="middle" font-size="13" font-weight="600" fill="#1d1b17">Detections with</text>
+  <text x="990" y="341" text-anchor="middle" font-size="13" font-weight="600" fill="#1d1b17">known error rates</text>
+</svg>

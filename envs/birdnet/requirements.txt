@@ -1,0 +1,7 @@
+# BirdNET runner env (PLAN.md §3b). Create with:
+#   python3.12 -m venv .venv
+#   .venv/bin/pip install -r requirements.txt
+#   .venv/bin/pip install -e ../.. --no-deps     # bex library, without librosa etc.
+birdnet==1.1.1
+polars>=1.0
+pyarrow>=15.0

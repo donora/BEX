@@ -1,0 +1,31 @@
+# BEX configuration. Copy to `bex.toml` (gitignored) and edit.
+# All relative paths resolve against the directory containing the config file.
+
+[paths]
+# Cold tier: raw audio. Often a symlink to an external drive — see PLAN.md §2.
+# The default points at the shared BirdSets SNE layout (../data/audio -> USB).
+audio_dir = "../data/audio"
+# Labelled-data manifests (annotations.csv, species.csv) for the SNE test rig.
+labels_dir = "../data"
+# Hot tier, on the SSD: score matrices, detections index, run manifests.
+store_dir = "store"
+# Hot tier: display spectrograms, cached Xeno-Canto examples.
+cache_dir = "cache"
+# Plausibility profiles (PLAN.md §3c). In-repo ones live here; add your own.
+profiles_dir = "profiles"
+# Named threshold sets saved from the app's Thresholds tab (one JSON file each).
+thresholds_dir = "thresholds"
+
+[site]
+# Default site metadata for ingests that don't specify their own.
+name = "sierra-nevada"
+lat = 38.49
+lon = -119.95
+
+[defaults]
+profile = "uk-starter"
+
+[xeno_canto]
+# Free per-user key from xeno-canto.org (needed only for cached example audio;
+# plain link-outs work without it). Never commit a real key.
+api_key = ""

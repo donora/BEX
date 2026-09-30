@@ -1,0 +1,9 @@
+# BEX theme: the brand's petrol teal as the accent colour (buttons, sliders,
+# selected options, tags). The dark theme uses a slightly lighter teal, still
+# deep enough for white text on it to stay legible (4.1:1). The palette is
+# described in V1.md (HM1); ui/common.py (BRAND) holds the logo colours.
+[theme.light]
+primaryColor = "#3e6a6b"
+
+[theme.dark]
+primaryColor = "#4f868c"

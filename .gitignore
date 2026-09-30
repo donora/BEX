@@ -1,0 +1,27 @@
+# Local config (copy bex.example.toml -> bex.toml)
+bex.toml
+
+# Hot-tier data — regenerable, never committed
+store/
+cache/
+
+# Virtual environments (app env here; runner envs under envs/*/)
+.venv/
+envs/*/.venv/
+
+# Data that must never land in the repo (PLAN.md §8 rule 4)
+data/audio
+*.flac
+*.wav
+*.mp3
+
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# uv lockfile: the documented install is pip; a stale lock would mislead
+uv.lock
+
+# Build output (python -m build)
+dist/

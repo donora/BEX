@@ -1,0 +1,6 @@
+[profile]
+display_name = "UK starter list (subset — pending full BOU import)"
+region = "United Kingdom"
+source = "Hand-curated starter subset of ~100 widespread/regular UK species, tier 1. NOT the full British List: the complete BOU list (~630 spp, tier 0) is a pending import (PLAN.md §3c), and a researcher-supplied list should replace this as soon as one exists. Scientific names follow recent IOC/eBird usage; verify against your reference list before drawing conclusions."
+citation = "Starter list pending BOU British List (bou.org.uk/british-list)"
+date = "2026-09-07"
