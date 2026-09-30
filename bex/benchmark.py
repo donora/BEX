@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 
 from .scorecard import MIN_OVERLAP_S
+from .taxonomy import is_species
 
 REPORT_OUTCOMES = ("correct", "filter hid a real bird", "wrong", "filter caught a mistake")
 SINGING_OUTCOMES = ("found", "filter hid a real bird", "missed")
@@ -300,6 +301,74 @@ def crowd(det: pl.DataFrame, species_key: str, delta: float,
                          "score", "focal_score", "strength", "focal_strength")
                  .sort("windows", descending=True).head(top))
     return table, summary
+
+
+def species_lists(det: pl.DataFrame, ann: pl.DataFrame,
+                  min_detections: int = 1) -> pl.DataFrame:
+    """What each recording's species list would be, species by species, against
+    the annotations — the answer a biodiversity survey takes from a model.
+
+    `det` is judged detections (`above` from thresholds.attach, `implausible`
+    from stats.mark_implausible). A species is *listed* for a recording when the
+    model reports it at least `min_detections` times there, above its own θ.
+    Where the location filter would hide those detections it is listed only
+    without the filter. Sound-event classes are not species and never listed
+    (taxonomy.is_species).
+
+    One row per (recording, species) that was listed or annotated, with the
+    navigator's outcome for it: correct, wrong, filter hid a real bird, filter
+    caught a mistake — or missed (annotated, not listed at all).
+    """
+    k = max(1, int(min_detections))
+    counts = (det.filter(pl.col("above"))
+                 .group_by("recording_id", "species_key")
+                 .agg(detections=pl.len().cast(pl.UInt32),
+                      shown=(~pl.col("implausible")).sum().cast(pl.UInt32)))
+    counts = counts.filter(pl.col("species_key").map_elements(
+        is_species, return_dtype=pl.Boolean))
+    truth = (ann.select("recording_id", "species_key").unique()
+                .with_columns(annotated=pl.lit(True)))
+    rows = (counts.join(truth, on=["recording_id", "species_key"], how="full",
+                        coalesce=True)
+                  .with_columns(pl.col("detections").fill_null(0),
+                                pl.col("shown").fill_null(0),
+                                pl.col("annotated").fill_null(False)))
+    listed = pl.col("detections") >= k
+    shown = pl.col("shown") >= k
+    real = pl.col("annotated")
+    rows = rows.with_columns(outcome=(
+        pl.when(listed & shown & real).then(pl.lit("correct"))
+        .when(listed & shown & ~real).then(pl.lit("wrong"))
+        .when(listed & ~shown & real).then(pl.lit("filter hid a real bird"))
+        .when(listed & ~shown & ~real).then(pl.lit("filter caught a mistake"))
+        .when(real).then(pl.lit("missed"))
+        .otherwise(pl.lit(None, dtype=pl.Utf8))))
+    return (rows.filter(pl.col("outcome").is_not_null())
+                .sort("recording_id", "species_key"))
+
+
+def species_list_summary(lists: pl.DataFrame) -> dict:
+    """Pooled over every (recording, species): the outcome counts, the share of
+    annotated species a list names (with the filter), the share of listed species
+    that were annotated, and the mean species count per recording, listed and
+    annotated."""
+    c = dict(lists.group_by("outcome").len().iter_rows()) if len(lists) else {}
+    get = lambda o: int(c.get(o, 0))
+    right, wrong, lost = get("correct"), get("wrong"), get("filter hid a real bird")
+    annotated = right + lost + get("missed")
+    per_rec = (lists.group_by("recording_id")
+                    .agg(listed=pl.col("outcome").is_in(["correct", "wrong"]).sum(),
+                         annotated=pl.col("outcome").is_in(
+                             ["correct", "filter hid a real bird", "missed"]).sum()))
+    return {
+        "counts": {o: get(o) for o in (*REPORT_OUTCOMES, "missed")},
+        "recall": right / annotated if annotated else float("nan"),
+        "precision": right / (right + wrong) if right + wrong else float("nan"),
+        "listed_per_recording": float(per_rec["listed"].mean()) if len(per_rec) else float("nan"),
+        "annotated_per_recording": (float(per_rec["annotated"].mean())
+                                    if len(per_rec) else float("nan")),
+        "per_recording": per_rec,
+    }
 
 
 def coverage(found_by_model: dict[str, set[str]], species: list[str]) -> dict[str, list[str]]:

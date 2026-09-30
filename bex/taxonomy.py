@@ -14,6 +14,8 @@ are the fix, added when a real unmapped report demands them — not preemptively
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,6 +30,16 @@ def normalise_key(name: str) -> str:
     genus = parts[0].capitalize()
     rest = [p.lower() for p in parts[1:]]
     return " ".join([genus, *rest])
+
+
+_SPECIES_RE = re.compile(r"^[A-Z][a-z]+ [a-z\-]+( [a-z\-]+)?$")
+
+
+def is_species(key: str) -> bool:
+    """A named species ("Turdus migratorius"), not a sound-event class. Perch also
+    scores ~80 AudioSet classes ("Car", "Church_bell") and BirdNET a few ("Dog",
+    "Engine"); none is a Latin binomial, and none belongs on a species list."""
+    return bool(_SPECIES_RE.match(key))
 
 
 def genus(species_key: str) -> str:

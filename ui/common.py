@@ -410,3 +410,14 @@ def get_geo(run_id: str, dataset_name: str, mode: str, profile_name: str,
                   if ann is not None and truth.aligned_path(
                       cfg.store_dir, dataset_name, run_id, "native").exists() else None),
     }
+
+
+@st.cache_data(show_spinner=False, max_entries=24)
+def get_species_lists(run_id: str, dataset_name: str, mode: str, profile_name: str,
+                      resolved_json: str, min_detections: int):
+    """Each recording's species list for one model, at the thresholds in force,
+    against the annotations (bex.benchmark.species_lists)."""
+    _, ann = get_dataset(dataset_name)
+    lists = benchmark.species_lists(get_judged(run_id, mode, profile_name, resolved_json),
+                                    ann, min_detections)
+    return lists, benchmark.species_list_summary(lists)

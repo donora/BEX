@@ -129,3 +129,28 @@ def test_crowd_counts_companions_within_delta_at_their_own_thresholds():
     assert set(table["species_key"]) == {WREN, "Imposter one"}   # 0.40 is too far
     assert s["windows"] == 1 and s["companions"] == 2
     assert s["implausible_companions"] == 1
+
+
+def test_species_lists_name_what_a_recording_would_be_said_to_hold():
+    from bex.benchmark import species_list_summary, species_lists
+    det = pl.DataFrame({
+        "recording_id": ["r1"] * 6,
+        "start_s": [0.0, 3.0, 0.0, 0.0, 6.0, 0.0],
+        "species_key": [ROBIN, ROBIN, WREN, "Car", "Regulus ignicapilla", "Strix aluco"],
+        "above": [True, True, True, True, True, True],
+        "implausible": [False, False, True, False, False, True],
+    })
+    ann = boxes((0.0, 2.0, ROBIN), (0.0, 2.0, WREN), (0.0, 2.0, "Sitta pygmaea"))
+    got = dict(species_lists(det, ann).select("species_key", "outcome").iter_rows())
+    assert got == {ROBIN: "correct",                       # listed, annotated
+                   WREN: "filter hid a real bird",         # only without the filter
+                   "Sitta pygmaea": "missed",              # annotated, never listed
+                   "Regulus ignicapilla": "wrong",         # listed, not there
+                   "Strix aluco": "filter caught a mistake"}   # "Car" is no species
+    s = species_list_summary(species_lists(det, ann))
+    assert s["recall"] == pytest.approx(1 / 3) and s["precision"] == pytest.approx(1 / 2)
+    assert s["listed_per_recording"] == 2 and s["annotated_per_recording"] == 3
+    # needing two detections drops the one-off wrong species (and the wren)
+    strict = dict(species_lists(det, ann, min_detections=2)
+                  .select("species_key", "outcome").iter_rows())
+    assert strict[ROBIN] == "correct" and "Regulus ignicapilla" not in strict

@@ -202,7 +202,153 @@ def render(ctx) -> None:
             f"<b>{B[m]['summary']['window_recall']:.0%}</b>" for m in order)
         + "</div>", unsafe_allow_html=True)
 
-    # ---- 3 · species by species, side by side --------------------------------- #
+    # ---- 3 · species lists: what each model would say was in a recording ------ #
+    heading(
+        f"What each model would tell you was there — recording by recording — at {rule_tag}",
+        "The answer a biodiversity survey takes from a model: **which species were "
+        "in this recording?** A model *lists* a species for a recording when it "
+        "reports it there at least as many times as the setting below, each above "
+        "that species' threshold. The list is then checked against the species "
+        "annotated in the recording — timing inside the recording does not "
+        "matter, only presence.\n\n"
+        "- **Species in a recording**: of the species annotated in each recording, "
+        "how many the model's list names (blue), names only without its location "
+        "filter (purple), or misses (grey).\n"
+        "- **What it would list**: of the species it names, how many were annotated "
+        "(blue) or not (orange); and what the filter removes from the list — a "
+        "mistake (light grey) or a real bird (purple).\n"
+        "- **Species per recording**: the size of the list against the number of "
+        "species annotated — the richness you would report.\n\n"
+        "Sound-event classes (Perch's *Car*, BirdNET's *Engine*) are not species and "
+        "never listed. Mammals or frogs a model names count as not there: they are "
+        "not in this survey's annotations.")
+    k_min = st.number_input(
+        "Count a species as present after this many detections in a recording",
+        1, 50, 1, 1, key="cmp_list_k",
+        help="One detection is enough to put a species on the list at 1. Raising it "
+             "drops one-off detections — usually wrong species — at the cost of rare, "
+             "quiet birds.")
+    L = {m: get_species_lists(rid, dataset, judge, profile_name,
+                              resolved_key(resolved[rid]), int(k_min))
+         for m, rid in labels.items()}
+    st.markdown(
+        "<div style='font-size:0.85rem'>" + outcome_key(list(benchmark.REPORT_OUTCOMES))
+        + " &nbsp; <span style='color:" + views.OUTCOME_COLOURS["missed"]
+        + "'>■</span> missed</div>", unsafe_allow_html=True)
+    for start in range(0, len(order), 3):
+        cols = st.columns(3)
+        for col, m in zip(cols, order[start:start + 3]):
+            _, sm = L[m]
+            c = sm["counts"]
+            with col.container(border=True):
+                st.markdown(f"**{m}**")
+                st.caption("Species in a recording")
+                in_rec = c["correct"] + c["filter hid a real bird"] + c["missed"]
+                if in_rec:
+                    st.altair_chart(outcome_bar(
+                        {o: c[o] / in_rec for o in
+                         ("correct", "filter hid a real bird", "missed")},
+                        ["correct", "filter hid a real bird", "missed"]), width="stretch")
+                st.markdown(f"Names **{sm['recall']:.0%}** of the species that are "
+                            "there")
+                st.caption("What it would list")
+                listed = sum(c[o] for o in benchmark.REPORT_OUTCOMES)
+                if listed:
+                    st.altair_chart(outcome_bar({o: c[o] / listed
+                                                 for o in benchmark.REPORT_OUTCOMES},
+                                                list(benchmark.REPORT_OUTCOMES)),
+                                    width="stretch")
+                st.markdown(f"**{sm['precision']:.0%}** of the species it lists "
+                            "were there")
+                st.markdown(
+                    "<div style='font-size:0.85rem'>Lists <b>"
+                    f"{sm['listed_per_recording']:.1f}</b> species per recording, "
+                    f"against <b>{sm['annotated_per_recording']:.1f}</b> annotated"
+                    "</div>", unsafe_allow_html=True)
+
+    # Richness: the list's length against the truth, one point per recording.
+    rich = pd.concat([L[m][1]["per_recording"].to_pandas().assign(model=m)
+                      for m in order], ignore_index=True)
+    if len(rich):
+        st.markdown("**Species per recording** — listed against annotated, one point per "
+                    "recording and model. On the diagonal, the count you would report "
+                    "is right.")
+        top = float(max(rich["listed"].max(), rich["annotated"].max())) + 1
+        diag = pd.DataFrame({"a": [0.0, top], "b": [0.0, top]})
+        sc = alt.Scale(domain=[0, top], nice=False)
+        line = alt.Chart(diag).mark_line(strokeDash=[4, 3], color=ink("domain")).encode(
+            x=alt.X("a:Q", scale=sc), y=alt.Y("b:Q", scale=sc))
+        pts = alt.Chart(rich).mark_point(size=80, filled=True, opacity=0.8).encode(
+            x=alt.X("annotated:Q", title="species annotated in the recording", scale=sc),
+            y=alt.Y("listed:Q", title="species the model lists", scale=sc),
+            color=alt.Color("model:N", scale=model_colour,
+                            legend=alt.Legend(orient="top", title=None)),
+            shape=alt.Shape("model:N", scale=model_shape, legend=None),
+            tooltip=[alt.Tooltip("model:N"), alt.Tooltip("recording_id:N", title="recording"),
+                     alt.Tooltip("annotated:Q"), alt.Tooltip("listed:Q")])
+        st.altair_chart(style_chart((line + pts).properties(height=320)), width="stretch")
+
+    # One recording, species by species: the list each model would hand you.
+    recs_all = sorted(set().union(*[set(L[m][0]["recording_id"].to_list()) for m in order]))
+    if recs_all:
+        n_ann = dict(annotations.group_by("recording_id")
+                     .agg(n=pl.col("species_key").n_unique()).iter_rows())
+        r1, r2 = st.columns([3, 1], vertical_alignment="bottom")
+        rec = r1.selectbox("One recording", recs_all, key="cmp_list_rec",
+                           format_func=lambda r: f"{r} — {n_ann.get(r, 0)} species annotated")
+        grid = pd.concat([L[m][0].filter(pl.col("recording_id") == rec).to_pandas()
+                          .assign(model=m) for m in order], ignore_index=True)
+        if len(grid):
+            grid["species"] = [nm(k) for k in grid["species_key"]]
+            truth_rows = (grid[grid["annotated"]][["species"]].drop_duplicates()
+                          .assign(model="annotated", outcome="annotated", detections=0))
+            cells = pd.concat([truth_rows, grid[["species", "model", "outcome",
+                                                 "detections"]]], ignore_index=True)
+            # Annotated species first, the ones most models name at the top; then
+            # the species nobody annotated, the ones most models list first.
+            named = grid[grid["outcome"].isin(["correct", "wrong"])].groupby("species").size()
+            real = set(truth_rows["species"])
+            sp_order = sorted(set(cells["species"]),
+                              key=lambda sp: (sp not in real, -named.get(sp, 0), sp))
+            columns = ["annotated", *order]
+            palette = {**views.OUTCOME_COLOURS, "annotated": views.TRUTH_COLOUR}
+            chart = alt.Chart(cells).mark_rect(stroke="#ffffff", strokeWidth=2,
+                                               cornerRadius=3).encode(
+                x=alt.X("model:N", sort=columns, title=None,
+                        axis=alt.Axis(orient="top", labelAngle=0, labelLimit=160)),
+                y=alt.Y("species:N", sort=sp_order, title=None,
+                        axis=alt.Axis(labelLimit=240, labelOverlap=False)),
+                color=alt.Color("outcome:N", legend=None, scale=alt.Scale(
+                    domain=list(palette), range=list(palette.values()))),
+                tooltip=[alt.Tooltip("species:N"), alt.Tooltip("model:N"),
+                         alt.Tooltip("outcome:N"),
+                         alt.Tooltip("detections:Q", title="detections above θ")])
+            st.altair_chart(style_chart(chart.properties(
+                width=min(760, 150 * len(columns)), height=alt.Step(18))),
+                width="content")
+            st.markdown(
+                "<div style='font-size:0.85rem'><span style='color:"
+                f"{views.TRUTH_COLOUR}'>■</span> annotated &nbsp; " + outcome_key(
+                    list(benchmark.REPORT_OUTCOMES)) + " &nbsp; <span style='color:"
+                + views.OUTCOME_COLOURS["missed"] + "'>■</span> missed</div>",
+                unsafe_allow_html=True)
+            lines = []
+            for m in order:
+                g = grid[grid["model"] == m]["outcome"].value_counts()
+                lines.append(
+                    f"<span style='color:{colour[m]}'>●</span> <b>{m}</b> lists "
+                    f"{int(g.get('correct', 0) + g.get('wrong', 0))}: "
+                    f"{int(g.get('correct', 0))} right, {int(g.get('wrong', 0))} not "
+                    f"there · misses {int(g.get('missed', 0) + g.get('filter hid a real bird', 0))}"
+                    f" of {len(real)}")
+            st.markdown("<div style='font-size:0.85rem; line-height:1.7'>"
+                        + "<br>".join(lines) + "</div>", unsafe_allow_html=True)
+        if r2.button("Open in the Explorer", icon="🔎", key="cmp_list_go"):
+            st.session_state.update(explorer_rec=rec, _explorer_rec=rec,
+                                    viewport_start=0.0, inspect_t=0.5, nav_seen={})
+            st.switch_page("ui/pages/explorer.py")
+
+    # ---- 4 · species by species, side by side --------------------------------- #
     heading(
         f"Where the models differ, species by species — at {rule_tag}",
         "One row per species with enough labelled data, one marker per model, "
