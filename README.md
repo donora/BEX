@@ -5,7 +5,7 @@
 Every bioacoustic project makes processing decisions: which model to process the data, which confidence
 threshold, whether to trust the model's location filter, etc. BEX runs your recordings
 through several models (currently BirdNET and Perch - can also add your own models), scores each against the same
-ground truth, and helps you design and quantify on a pipeline with a known precision and recall
+ground truth, and helps you design and quantify a pipeline with a known precision and recall
 for every species. It also makes **the geographic filter visible**: what each model
 predicted before its location prior silenced it, and how often that filter hides a
 bird that was really there.
