@@ -70,6 +70,8 @@ Which model is better overall, on equal terms. Every number on the page is at
 one threshold rule, named in a banner at the top (here, "precision ≥ 0.95":
 each species gets the threshold that keeps it at least 95% precise).
 
+(The threshold rule and setting is key here - try changing to precision floor in the sidebar to see the improved recall (the 'be correct' or 'be paranoid about missing things' tradeoff), or choose e.g. Max F1 for a statistical rule. Explore these more fully in the threshold tab, below)
+
 ![One card per model](docs/tour/compare-cards.png)
 
 1. **When it reports a bird**: how often it is right.
