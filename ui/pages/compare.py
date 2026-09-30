@@ -5,6 +5,7 @@ from ui import sidebar
 
 def render(ctx) -> None:
     dataset = ctx.dataset
+    recordings = ctx.recordings
     annotations = ctx.annotations
     picked = ctx.picked
     run_label = ctx.run_label
@@ -211,14 +212,14 @@ def render(ctx) -> None:
         "that species' threshold. The list is then checked against the species "
         "annotated in the recording — timing inside the recording does not "
         "matter, only presence.\n\n"
-        "- **Species in a recording**: of the species annotated in each recording, "
-        "how many the model's list names (blue), names only without its location "
-        "filter (purple), or misses (grey).\n"
-        "- **What it would list**: of the species it names, how many were annotated "
-        "(blue) or not (orange); and what the filter removes from the list — a "
-        "mistake (light grey) or a real bird (purple).\n"
-        "- **Species per recording**: the size of the list against the number of "
-        "species annotated — the richness you would report.\n\n"
+        "**The chart** is the average recording. The green bar is how many species "
+        "are annotated in it. Each model's bar stacks what its list would make of "
+        "them: up to the dashed line, the species that are there — named (blue), "
+        "named only without the location filter (purple), missed (grey) — so those "
+        "three always add up to the green bar. Above the line, the species it would "
+        "list that are not there (orange), and those its filter removes (light "
+        "grey). A bar that reaches past the line lists more species than are there; "
+        "the blue part is how many of them are right.\n\n"
         "Sound-event classes (Perch's *Car*, BirdNET's *Engine*) are not species and "
         "never listed. Mammals or frogs a model names count as not there: they are "
         "not in this survey's annotations.")
@@ -231,62 +232,72 @@ def render(ctx) -> None:
     L = {m: get_species_lists(rid, dataset, judge, profile_name,
                               resolved_key(resolved[rid]), int(k_min))
          for m, rid in labels.items()}
+    # One chart, every model side by side: the average recording's species, and
+    # what each model's list would make of them. Up to the annotated line, the
+    # species that are there (named, named only without the filter, missed);
+    # above it, the species it would list that are not.
+    n_recs = max(1, len(set(recordings["recording_id"])))
+    avg_there = sum(L[order[0]][1]["counts"][o] for o in
+                    ("correct", "filter hid a real bird", "missed")) / n_recs
+    stack = ["correct", "filter hid a real bird", "missed", "wrong",
+             "filter caught a mistake"]
+    words = {"correct": "named, and there", "filter hid a real bird":
+             "there, but hidden by the filter", "missed": "there, but not named",
+             "wrong": "named, but not there", "filter caught a mistake":
+             "not there, and hidden by the filter"}
+    bars = [{"column": "annotated", "part": "annotated", "y0": 0.0, "y1": avg_there,
+             "value": avg_there, "what": "species annotated in the recording"}]
+    for m in order:
+        c, y = L[m][1]["counts"], 0.0
+        for o in stack:
+            v = c[o] / n_recs
+            bars.append({"column": m, "part": o, "y0": y, "y1": y + v, "value": v,
+                         "what": words[o]})
+            y += v
+    bars = pd.DataFrame(bars)
+    bars["mid"] = (bars["y0"] + bars["y1"]) / 2
+    bars["label"] = [f"{v:.1f}" if v >= 0.6 else "" for v in bars["value"]]
+    columns = ["annotated", *order]
+    palette = {**views.OUTCOME_COLOURS, "annotated": views.TRUTH_COLOUR}
+    x = alt.X("column:N", sort=columns, title=None,
+              axis=alt.Axis(labelAngle=0, labelLimit=160, labelFontSize=12))
+    y_scale = alt.Scale(domain=[0, float(bars["y1"].max()) * 1.08], nice=False)
+    stacked = alt.Chart(bars).mark_bar(width=alt.RelativeBandSize(0.62),
+                                       stroke="#ffffff", strokeWidth=1).encode(
+        x=x, y=alt.Y("y0:Q", title="species per recording, on average", scale=y_scale),
+        y2="y1:Q",
+        color=alt.Color("part:N", legend=None, scale=alt.Scale(
+            domain=list(palette), range=list(palette.values()))),
+        tooltip=[alt.Tooltip("column:N", title="model"), alt.Tooltip("what:N"),
+                 alt.Tooltip("value:Q", title="species per recording", format=".1f")])
+    text = alt.Chart(bars).mark_text(fontSize=11, fontWeight="bold").encode(
+        x=x, y=alt.Y("mid:Q", scale=y_scale), text="label:N",
+        color=alt.condition(alt.FieldOneOfPredicate(
+            "part", ["missed", "filter hid a real bird", "correct", "annotated", "wrong"]),
+            alt.value("#ffffff"), alt.value("#1d1b17")))
+    there = pd.DataFrame({"y": [avg_there]})
+    line = alt.Chart(there).mark_rule(strokeDash=[5, 3], strokeWidth=1.5,
+                                      color=ink("title")).encode(
+        y=alt.Y("y:Q", scale=y_scale))
+    st.altair_chart(style_chart(alt.layer(stacked, text, line).properties(
+        height=380)), width="stretch")
     st.markdown(
-        "<div style='font-size:0.85rem'>" + outcome_key(list(benchmark.REPORT_OUTCOMES))
-        + " &nbsp; <span style='color:" + views.OUTCOME_COLOURS["missed"]
-        + "'>■</span> missed</div>", unsafe_allow_html=True)
-    for start in range(0, len(order), 3):
-        cols = st.columns(3)
-        for col, m in zip(cols, order[start:start + 3]):
-            _, sm = L[m]
-            c = sm["counts"]
-            with col.container(border=True):
-                st.markdown(f"**{m}**")
-                st.caption("Species in a recording")
-                in_rec = c["correct"] + c["filter hid a real bird"] + c["missed"]
-                if in_rec:
-                    st.altair_chart(outcome_bar(
-                        {o: c[o] / in_rec for o in
-                         ("correct", "filter hid a real bird", "missed")},
-                        ["correct", "filter hid a real bird", "missed"]), width="stretch")
-                st.markdown(f"Names **{sm['recall']:.0%}** of the species that are "
-                            "there")
-                st.caption("What it would list")
-                listed = sum(c[o] for o in benchmark.REPORT_OUTCOMES)
-                if listed:
-                    st.altair_chart(outcome_bar({o: c[o] / listed
-                                                 for o in benchmark.REPORT_OUTCOMES},
-                                                list(benchmark.REPORT_OUTCOMES)),
-                                    width="stretch")
-                st.markdown(f"**{sm['precision']:.0%}** of the species it lists "
-                            "were there")
-                st.markdown(
-                    "<div style='font-size:0.85rem'>Lists <b>"
-                    f"{sm['listed_per_recording']:.1f}</b> species per recording, "
-                    f"against <b>{sm['annotated_per_recording']:.1f}</b> annotated"
-                    "</div>", unsafe_allow_html=True)
-
-    # Richness: the list's length against the truth, one point per recording.
-    rich = pd.concat([L[m][1]["per_recording"].to_pandas().assign(model=m)
-                      for m in order], ignore_index=True)
-    if len(rich):
-        st.markdown("**Species per recording** — listed against annotated, one point per "
-                    "recording and model. On the diagonal, the count you would report "
-                    "is right.")
-        top = float(max(rich["listed"].max(), rich["annotated"].max())) + 1
-        diag = pd.DataFrame({"a": [0.0, top], "b": [0.0, top]})
-        sc = alt.Scale(domain=[0, top], nice=False)
-        line = alt.Chart(diag).mark_line(strokeDash=[4, 3], color=ink("domain")).encode(
-            x=alt.X("a:Q", scale=sc), y=alt.Y("b:Q", scale=sc))
-        pts = alt.Chart(rich).mark_point(size=80, filled=True, opacity=0.8).encode(
-            x=alt.X("annotated:Q", title="species annotated in the recording", scale=sc),
-            y=alt.Y("listed:Q", title="species the model lists", scale=sc),
-            color=alt.Color("model:N", scale=model_colour,
-                            legend=alt.Legend(orient="top", title=None)),
-            shape=alt.Shape("model:N", scale=model_shape, legend=None),
-            tooltip=[alt.Tooltip("model:N"), alt.Tooltip("recording_id:N", title="recording"),
-                     alt.Tooltip("annotated:Q"), alt.Tooltip("listed:Q")])
-        st.altair_chart(style_chart((line + pts).properties(height=320)), width="stretch")
+        "<div style='font-size:0.85rem'>Below the dashed line, the species that are "
+        f"there ({avg_there:.1f} per recording): <span style='color:"
+        f"{views.OUTCOME_COLOURS['correct']}'>■</span> named &nbsp; <span style='color:"
+        f"{views.OUTCOME_COLOURS['filter hid a real bird']}'>■</span> named only without "
+        f"the filter &nbsp; <span style='color:{views.OUTCOME_COLOURS['missed']}'>■</span> "
+        "missed<br>Above it, species it would list that are not there: <span style='color:"
+        f"{views.OUTCOME_COLOURS['wrong']}'>■</span> listed &nbsp; <span style='color:"
+        f"{views.OUTCOME_COLOURS['filter caught a mistake']}'>■</span> removed by the "
+        "filter</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:0.85rem; line-height:1.8; margin-top:0.4rem'>"
+                + "<br>".join(
+                    f"<span style='color:{colour[m]}'>●</span> <b>{m}</b> lists "
+                    f"<b>{L[m][1]['listed_per_recording']:.1f}</b> species per recording: "
+                    f"names <b>{L[m][1]['recall']:.0%}</b> of the species there, and "
+                    f"<b>{L[m][1]['precision']:.0%}</b> of what it lists was there"
+                    for m in order) + "</div>", unsafe_allow_html=True)
 
     # One recording, species by species: the list each model would hand you.
     recs_all = sorted(set().union(*[set(L[m][0]["recording_id"].to_list()) for m in order]))
