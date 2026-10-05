@@ -462,6 +462,21 @@ OUTCOME_COLOURS = {
 # Checked with the five above under protan / deutan / tritan (min ΔE ≈ 19).
 TRUTH_COLOUR = "#1baf7a"
 
+#: Survey protocol (V1.1): the navigator's colours, with *check* as the light twin
+#: of each firm outcome (a check that was real is pale blue, one that was not
+#: there pale orange), and a khaki pair for listings outside the label set,
+#: which cannot be judged right or wrong.
+SURVEY_COLOURS = {
+    "firm, right": "#2a78d6",
+    "check, real": "#9cc3f0",
+    "filter hid a real bird": "#4a1a6b",
+    "missed": "#6b6a63",
+    "firm, wrong": "#eb6834",
+    "check, not there": "#f5b993",
+    "firm, can't judge": "#a89f7a",
+    "check, can't judge": "#ddd7c0",
+}
+
 # Models get their own colours, distinct from the outcome colours above — a
 # model is never "blue" when blue means "correct". Checked under protan / deutan
 # / tritan (min ΔE ≈ 21), and always paired with a shape so colour is never the

@@ -22,7 +22,7 @@ from PIL import Image
 from streamlit_image_coordinates import streamlit_image_coordinates
 
 from bex import ingest, metrics, scorecard, stats, store, truth, views
-from bex import benchmark, geofilter
+from bex import benchmark, geofilter, survey
 from bex import thresholds as th
 from bex.audio import load_clip
 from bex.player import encode_mp3, player_html
@@ -421,3 +421,30 @@ def get_species_lists(run_id: str, dataset_name: str, mode: str, profile_name: s
     lists = benchmark.species_lists(get_judged(run_id, mode, profile_name, resolved_json),
                                     ann, min_detections)
     return lists, benchmark.species_list_summary(lists)
+
+
+# ---- Survey protocol page (V1.1) ------------------------------------------ #
+@st.cache_data(show_spinner=False, max_entries=12)
+def get_survey_detections(run_id: str, mode: str, profile_name: str) -> pl.DataFrame:
+    """Species detections with the judge's flag — what a species list reads."""
+    return survey.species_only(get_marked(run_id, mode, profile_name))
+
+
+@st.cache_resource(show_spinner=False, max_entries=8)
+def get_curve_source(run_id: str, dataset: str) -> survey.CurveSource:
+    """The aligned frame split by species once, for refitting θ on any subset."""
+    aligned, _ = get_aligned(run_id, dataset, "native")
+    return survey.CurveSource(aligned)
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def get_survey_evidence(run_id: str, dataset: str, mode: str, profile_name: str,
+                        spec: th.RuleSpec, identity: str, fit_on: tuple[str, ...] | None,
+                        spans: tuple[float, ...], sidebar_json: str) -> pl.DataFrame:
+    """Evidence at every precision floor (θ fitted on `fit_on`; every recording
+    when None) and at the sidebar's thresholds."""
+    bars = ({} if not truth.aligned_path(cfg.store_dir, dataset, run_id, "native").exists()
+            else survey.fit_bars(get_curve_source(run_id, dataset), identity, spec,
+                                 list(fit_on) if fit_on is not None else None))
+    bars[survey.SIDEBAR] = resolved_from_key(sidebar_json)
+    return survey.evidence(get_survey_detections(run_id, mode, profile_name), bars, spans)

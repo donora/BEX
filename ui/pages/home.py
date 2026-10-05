@@ -120,6 +120,14 @@ def render() -> None:
             st.page_link(page, label=title, icon=icon)
             st.caption(text)
 
+    # ---- the decision: step 3 ---------------------------------------------- #
+    st.markdown("### Decide")
+    with st.container(border=True):
+        st.page_link("ui/pages/survey.py", label="Survey protocol", icon="✅")
+        st.caption("Turn each model's detections into a species list for every "
+                   "recording — what to report firmly, and what an expert should "
+                   "check first — and test the rule on recordings it has not seen.")
+
     st.page_link("ui/pages/about.py", label="About BEX — what it measures and why",
                  icon="ℹ️")
 

@@ -3,6 +3,18 @@ from ui.common import *  # noqa: F403 — the shared app toolkit
 
 
 def render() -> None:
+    st.header("Why this exists")
+    st.markdown(
+        "Bird-ID models such as BirdNET and Perch make it possible to survey birds "
+        "from thousands of hours of recordings, but they report scores, not species "
+        "lists. Between the two sit choices — which model, which threshold, whether "
+        "to trust its location filter, how many detections make a species present — "
+        "that change the answer and are usually left at their defaults.\n\n"
+        "**BEX is for ecologists and bioacoustics researchers running acoustic "
+        "surveys.** It tests those choices against annotated recordings, so you can "
+        "choose how to process the rest of your data, and know how often it will be "
+        "wrong, before you rely on it.")
+
     st.header("A processing pipeline for your bioacoustic data")
     st.markdown(
         "Every bioacoustic project makes processing decisions: which model, which "
@@ -31,9 +43,13 @@ def render() -> None:
 4. **Compare** — the same audio, the same truth and the same metrics for every
    model, so a difference between them is a difference in the models (*Compare
    models*, *Species scorecard*).
-5. **Decide and apply** — save the thresholds you settle on as a named set, and
-   use it to process recordings that have no annotations, with the error rates
-   you measured.
+5. **Decide** — choose the rule that turns each model's detections into a
+   species list for every recording: species it reports firmly, and species an
+   expert should check first. Tune it to your goal and limits, then test it on
+   recordings it was not tuned on (*Survey protocol*).
+6. **Apply** — save the thresholds you settle on as a named set, and use them to
+   process recordings that have no annotations, with the error rates you
+   measured.
         """
     )
 

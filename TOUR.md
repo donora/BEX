@@ -18,7 +18,10 @@ thresholds, filter) with a known precision and recall for every species.
 ![The BEX home page](docs/tour/home.png)
 
 What is loaded (recordings, model runs, saved threshold sets) and where to go
-next.
+next. The bar across the top follows the workflow, numbered left to right:
+**1 · Explorer** to look and listen, **2 · Analysis** to compare the models, and
+**3 · Survey protocol** to decide how to turn detections into species lists. *Set
+up* and *About* sit to the right.
 
 ---
 
@@ -163,6 +166,66 @@ annotated birds.
 The birds the filter suppresses most. ⚠ marks a bird that was annotated in some
 of those windows. Here Fox Sparrow, a common local bird that sits just under the
 filter's cutoff, dominates.
+
+---
+
+## Survey protocol
+
+The last step: how to turn a model's detections into a species list for each
+recording. Detections are window by window; a survey wants to know which birds
+were there. This page compares the rules that get from one to the other, with a
+middle tier for an expert:
+
+- **firm**: reported without review;
+- **to check**: possibly there, so an expert listens before it is reported;
+- **not found**.
+
+![Choose your rule](docs/tour/survey-choose.png)
+
+1. **Your goal.** What to optimise for (here, the most birds found once the
+   expert has checked the doubtful ones) and your limits: firm calls at least
+   95% right, since nobody checks them, and at most 10 checks per recording.
+2. **The rule.** Let BEX search for the best rule for your goal (for each model
+   at its own best, side by side, or for one model), or set it by hand. A rule has a firm
+   tier and a check tier, each with its own precision threshold and number of
+   detections, so a strict bar can decide the firm calls while a looser one
+   sends possible birds to the expert.
+3. **The rules in force**, one per model, and where they came from.
+4. **What each model's lists would hold**, each at its own rule, in an average
+   recording. The green
+   bar is the species annotated there. Below the dashed line, the species that
+   are there: firm (blue), to check (pale blue), or not found (grey). Above it,
+   the species listed that are not there.
+
+Everything above is worked out on *tuning* recordings. Half the recordings are
+held back as *test* recordings, because a rule chosen and scored on the same
+recordings flatters itself.
+
+![Every rule searched](docs/tour/survey-rules.png)
+
+Every rule the search tried, as birds found after checking against checks per
+recording. The lines are each model's best for each amount of checking; the
+large markers are each model's best for your goal, and the rings are the rules in
+force.
+For BirdNET, going from about 3 to 8 checks per recording lifts the birds found
+from 69% to 83%.
+
+![The rule report](docs/tour/survey-report.png)
+
+**Run this rule** scores it on the test recordings.
+
+1. **Each model at its own best rule.** (Optimise for one model instead, and a
+   second tab compares every model on that one rule.)
+2. **Birds found after checking**, per model. The black line is the 95% range
+   across test recordings; the grey tick is the same number on the tuning
+   recordings, so a rule fitted too closely to them shows up as a drop.
+3. **Firm errors per recording**: the mistakes that would go into your results
+   unchecked.
+
+Here only Perch (sigmoid) keeps its firm calls above 95% right on recordings
+the rule had not seen. **Full assessment** goes further: every recording takes a
+turn as the test recording, for steadier numbers and a measure of how stable
+the chosen rule is.
 
 ---
 

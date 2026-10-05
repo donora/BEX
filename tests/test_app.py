@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-PAGES = ["home", "explorer", "about", "compare", "scorecard", "forensics",
+PAGES = ["home", "explorer", "about", "compare", "survey", "scorecard", "forensics",
          "recordings", "models", "thresholds"]
 
 
