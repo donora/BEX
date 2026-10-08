@@ -269,3 +269,31 @@ def test_boxes_record_whether_suggestions_were_viewed(store):
     p = L.set_dir(store, "site", "mine") / "annotations.parquet"
     pl.read_parquet(p).drop("assisted").write_parquet(p)
     assert L.load_set(store, "site", "mine").boxes["assisted"].to_list() == [False, False]
+
+
+def test_practice_feedback_against_the_experts():
+    def box(t0, t1, sp, rid="r0"):
+        return {"recording_id": rid, "start_s": float(t0), "end_s": float(t1),
+                "low_hz": 1000.0, "high_hz": 2000.0, "species_key": sp}
+    ref = pl.DataFrame([box(5, 7, ROBIN), box(20, 22, WREN), box(40, 41, ROBIN),
+                        box(65, 66, WREN)])                     # last one: next minute
+    mine = pl.DataFrame([box(5.2, 6.8, ROBIN), box(20.5, 21.5, ROBIN),
+                         box(50, 52, "Strix varia")])
+    fb = L.compare_to_reference(mine, ref, "r0", 0.0, 60.0)
+    assert [c["outcome"] for c in fb["calls"]] == ["found", "named differently", "missed"]
+    assert fb["calls"][1]["yours"] == ROBIN
+    assert fb["n_found"] == 1 and fb["n_calls"] == 3
+    assert fb["missed_species"] == [WREN] and fb["found_species"] == [ROBIN]
+    assert fb["extra_species"] == ["Strix varia"]
+
+
+def test_a_practice_set_is_marked_and_samples_labelled_recordings(tmp_path):
+    ann = pl.DataFrame([{"recording_id": "r0", "start_s": 5.0, "end_s": 6.0,
+                         "low_hz": 1.0, "high_hz": 2.0, "species_key": ROBIN}],
+                       schema=ANNOTATIONS_SCHEMA)
+    write_dataset(tmp_path, "sne", recordings(labelled=True), ann)
+    ls = L.create_practice(tmp_path, "sne", "Mara D", recordings(labelled=True), 3)
+    assert ls.name == "practice-mara-d" and len(ls.sample) == 3
+    assert L.is_practice(tmp_path, "sne", ls.name)
+    again = L.create_practice(tmp_path, "sne", "Mara D", recordings(labelled=True), 3)
+    assert again.name == ls.name                                   # reused, not duplicated

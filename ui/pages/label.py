@@ -190,7 +190,8 @@ MARGIN = 5.0
 
 
 def chunk_figure(mel, meta, t0, t1, chunk: tuple[float, float], boxes: pl.DataFrame,
-                 pending: dict | None, corner: dict | None, fmt):
+                 pending: dict | None, corner: dict | None, fmt,
+                 expert: pl.DataFrame | None = None):
     """The chunk's spectrogram, with a shaded margin of its neighbours, its boxes,
     the first corner of a box being drawn and the box waiting for a species.
     Returns the PNG and the axes box (figure fractions) for turning a click back
@@ -232,6 +233,25 @@ def chunk_figure(mel, meta, t0, t1, chunk: tuple[float, float], boxes: pl.DataFr
                 va="bottom", ha="left", zorder=5,
                 bbox=dict(boxstyle="round,pad=0.2", facecolor="#12100f", alpha=0.75,
                           edgecolor="none"))
+    # Practice: once the minute is closed, the experts' boxes, dashed green — each
+    # species named once per run of calls, not on every box.
+    last_named: dict[str, float] = {}
+    for b in (expert.sort("start_s").iter_rows(named=True) if expert is not None else []):
+        lo = views.hz_to_mel_row(b["low_hz"], meta) if np.isfinite(b["low_hz"]) else 0
+        hi = views.hz_to_mel_row(b["high_hz"], meta) if np.isfinite(b["high_hz"]) else n_rows
+        x0, x1 = max(b["start_s"], t0), min(b["end_s"], t1)
+        if x1 <= x0:
+            continue
+        ax.add_patch(plt.Rectangle((x0, lo), x1 - x0, hi - lo, fill=False,
+                                   edgecolor="#3ecf8e", linewidth=1.6,
+                                   linestyle=(0, (4, 2)), zorder=5))
+        if b["start_s"] - last_named.get(b["species_key"], -1e9) > 0.25 * (t1 - t0):
+            last_named[b["species_key"]] = b["start_s"]
+            ax.text(x0 + 0.1, max(lo - 1.5, 2),
+                    "expert: " + fmt(b["species_key"]).split(" — ")[0],
+                    fontsize=7, color="#3ecf8e", va="top", ha="left", zorder=6,
+                    bbox=dict(boxstyle="round,pad=0.2", facecolor="#12100f", alpha=0.75,
+                              edgecolor="none"))
     if pending:
         lo, hi = (views.hz_to_mel_row(pending["low_hz"], meta),
                   views.hz_to_mel_row(pending["high_hz"], meta))
@@ -357,6 +377,53 @@ def suggestions(ctx, rec_id: str, pending: dict, box_key: tuple, opened: bool,
                  width="stretch")
 
 
+def hear(rec_id: str, start_s: float, end_s: float) -> None:
+    st.session_state["lab_focus"] = (rec_id, start_s, end_s)
+
+
+def practice_feedback(ls, reference: pl.DataFrame, rec_id: str, start: float, end: float,
+                      fmt) -> None:
+    """After a practice minute is closed: your boxes against the experts'."""
+    fb = labels.compare_to_reference(ls.boxes, reference, rec_id, start, end)
+    name = lambda k: fmt(k).split(" — ")[0]     # noqa: E731
+    if not fb["n_calls"] and not fb["extra"]:
+        st.success("The experts heard no birds in this minute either. ✓")
+        return
+    n_sp, n_found = len(fb["expert_species"]), len(fb["found_species"])
+    all_sp = n_found == n_sp and n_sp > 0
+    all_calls = fb["n_found"] == fb["n_calls"] and fb["n_calls"] > 0
+    head = (f"The experts labelled **{n_sp} species** in **{fb['n_calls']} calls** here. "
+            f"You found **{n_found} of {n_sp}** species{' ✓' if all_sp else ''}, and "
+            f"boxed **{fb['n_found']} of {fb['n_calls']}** calls{' ✓' if all_calls else ''}.")
+    (st.success if all_sp and all_calls else st.info)(head)
+    if all_sp and not all_calls:
+        st.caption("Every call counts, not just every species: models are scored window "
+                   "by window, so a call without a box reads as *no bird here* and makes "
+                   "a model that heard it look wrong. The unboxed calls are below.")
+    st.toggle("Show the experts' boxes (dashed green)", value=True, key="lab_show_expert")
+    marks = {"found": "✓", "named differently": "≈", "missed": "✗"}
+    for i, c in enumerate(fb["calls"]):
+        a, b = st.columns([4, 1], vertical_alignment="center")
+        what = name(c["species_key"])
+        tail = ("you found it" if c["outcome"] == "found" else
+                f"you named it {name(c['yours'])}" if c["outcome"] == "named differently"
+                else "missed")
+        a.markdown(f"{marks[c['outcome']]} **{what}** · {mmss1(c['start_s'])}–"
+                   f"{mmss1(c['end_s'])} · {tail}")
+        b.button("▶ hear it", key=f"lab_hear_{i}", on_click=hear,
+                 args=(rec_id, c["start_s"], c["end_s"]), width="stretch",
+                 help="Marks it on the player's timeline: press ▶ box to listen.")
+    if fb["extra"]:
+        st.caption("Your boxes the experts did not label here (a bird they did not "
+                   "mark, or one named differently): "
+                   + ", ".join(f"{name(y['species_key'])} at {mmss1(y['start_s'])}"
+                               for y in fb["extra"]))
+    nxt = labels.next_chunk(ls)
+    if nxt and st.button("Next practice minute ▶", type="primary", key="lab_prac_next"):
+        go_to(nxt["recording_id"], nxt["start_s"])
+        st.rerun()
+
+
 def go_to(rec_id: str, start_s: float) -> None:
     """Open a chunk. A first corner already placed is kept, so a box can be
     finished in the next minute; a box waiting for its species is not."""
@@ -365,6 +432,8 @@ def go_to(rec_id: str, start_s: float) -> None:
 
 def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) -> None:
     dataset, recordings = ctx.dataset, ctx.recordings
+    practice = labels.is_practice(cfg.store_dir, dataset, ls.name)
+    reference = get_dataset(dataset)[1] if practice else None
     rec_ids = recordings["recording_id"].to_list()
     duration_of = dict(zip(recordings["recording_id"], recordings["duration_s"]))
     path_of = dict(zip(recordings["recording_id"], recordings["path"]))
@@ -472,8 +541,12 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
             if c2.button("Cancel", key="lab_corner_cancel", width="stretch"):
                 st.session_state["lab_corner"] = None
                 st.rerun()
+    show_expert = (practice and not editable and reference is not None
+                   and st.session_state.get("lab_show_expert", True))
+    expert = (reference.filter((pl.col("recording_id") == rec_id) & (pl.col("end_s") > t0)
+                               & (pl.col("start_s") < t1)) if show_expert else None)
     img, pos, x_ticks = chunk_figure(mel, meta, t0, t1, (start, end), shown, pending,
-                                     corner, fmt)
+                                     corner, fmt, expert)
     click = streamlit_image_coordinates(img, width="stretch",
                                         key=f"lab_img_{rec_id}_{start:g}",
                                         cursor="crosshair" if editable else "default")
@@ -512,8 +585,11 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
         # The box to hear on its own: the one just drawn, else the one selected
         # in the table below — marked on the timeline, with ▶ box to play it.
         focus = None
+        heard = st.session_state.get("lab_focus")
         if pending:
             focus = (pending["start_s"], pending["end_s"])
+        elif heard and heard[0] == rec_id and heard[1] < t1 and heard[2] > t0:
+            focus = (heard[1], heard[2])
         else:
             sel = st.session_state.get(f"lab_boxes_{rec_id}_{start:g}")
             rows = (sel or {}).get("selection", {}).get("rows", []) if sel else []
@@ -535,7 +611,9 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
     # ---- name the box ------------------------------------------------------------ #
     left, right = st.columns([1.35, 1])
     with left:
-        if not editable:
+        if not editable and practice and reference is not None:
+            practice_feedback(ls, reference, rec_id, start, end, fmt)
+        elif not editable:
             closer = ls.chunks.filter((pl.col("recording_id") == rec_id)
                                       & ((pl.col("start_s") - start).abs() < 1e-6))
             st.info(f"This chunk is **closed** — signed off by "
@@ -634,7 +712,8 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
             labels.close_chunk(ls, rec_id, start, end, labeller)
             if save(ls):
                 nxt = labels.next_chunk(ls)
-                if order is not None and nxt:
+                # In practice, stay to read the feedback; otherwise move on.
+                if order is not None and nxt and not practice:
                     go_to(nxt["recording_id"], nxt["start_s"])
             st.rerun()
     else:
@@ -988,6 +1067,12 @@ much your recordings vary and projects how much more you need.
 - If you can hear a bird but cannot tell what it is, label it **Unknown bird**
   rather than guessing. Unknown birds are counted, and left out of species scores.
 
+**Practise first.** On a dataset that came with expert labels (the demo set),
+*New to labelling? Practise on minutes the experts have done* gives you a few
+minutes to label; as you close each, BEX shows which of the experts' calls you
+found, named differently or missed, with each to listen to. Practice labels
+never count as ground truth.
+
 **A worked pilot.**
 1. *Plan and sample* → say how many minutes (5 is a good start) → **Pick**.
 2. *Label* → **Next chunk in the sample**. Listen to the whole minute.
@@ -1004,6 +1089,25 @@ much your recordings vary and projects how much more you need.
 
 
 # --------------------------------------------------------------------------- #
+
+def practice_offer(ctx, dataset: str, labeller: str) -> None:
+    """On a dataset with expert labels: try labelling and see how you did."""
+    with st.expander("🎓 New to labelling? Practise on minutes the experts have done"):
+        st.markdown(
+            f"*{dataset}* came with expert labels. Label a few of its minutes "
+            "yourself and, as you close each one, BEX compares your boxes with the "
+            "experts' — which birds you found, which you named differently, and "
+            "which you missed, with each to listen to. It is the quickest way to "
+            "learn what birdsong looks like on a spectrogram. Practice labels are "
+            "kept apart, and never count as ground truth.")
+        if st.button("Start practising (5 minutes)", type="primary", key="lab_prac_go",
+                     disabled=not labeller, help=None if labeller else
+                     "Enter your name first (top right)."):
+            ls = labels.create_practice(cfg.store_dir, dataset, labeller, ctx.recordings)
+            st.session_state["lab_select_pending"] = (dataset, ls.name, "Label")
+            st.session_state.pop("lab_rec", None)
+            st.rerun()
+
 
 def render(ctx) -> None:
     dataset = ctx.dataset
@@ -1022,8 +1126,15 @@ def render(ctx) -> None:
         st.session_state[key] = pending[1]
         st.session_state["label_view"] = pending[2]
     if st.session_state.get(key) not in [*sets, NEW_SET]:
-        st.session_state[key] = sets[0] if sets else NEW_SET
-    choice = c1.selectbox("Label set you are working on", [*sets, NEW_SET], key=key)
+        real = [n for n in sets if not labels.is_practice(cfg.store_dir, dataset, n)]
+        st.session_state[key] = (real or sets or [NEW_SET])[0]
+    choice = c1.selectbox(
+        "Label set you are working on", [*sets, NEW_SET], key=key,
+        format_func=lambda n: f"🎓 {n} (practice)"
+        if n != NEW_SET and labels.is_practice(cfg.store_dir, dataset, n) else n)
+    if labels.has_imported(cfg.store_dir, dataset) and not (
+            choice != NEW_SET and labels.is_practice(cfg.store_dir, dataset, choice)):
+        practice_offer(ctx, dataset, labeller)
     if choice == NEW_SET:
         if labels.has_imported(cfg.store_dir, dataset):
             st.info(f"**{dataset}** came with annotations, so it can be scored already. "
@@ -1033,7 +1144,12 @@ def render(ctx) -> None:
 
     ls = load(dataset, choice)
     in_use = ctx.truth_ref and labels.parse_ref(ctx.truth_ref)[0] == ls.name
-    if not in_use:
+    if labels.is_practice(cfg.store_dir, dataset, ls.name):
+        st.info("🎓 **Practice.** These minutes were labelled by experts. Label each one "
+                "as if it were your own, close it, and BEX shows what the experts "
+                "heard — what you found, named differently or missed — with each call "
+                "to listen to. Practice labels never count as ground truth.")
+    elif not in_use:
         st.caption(f"The other pages are not scoring against *{ls.name}* yet: choose "
                    f"**{sidebar.VIEW_LABELLED}** in the sidebar, then *{ls.name}* under "
                    "**Scored against**.")

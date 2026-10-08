@@ -33,6 +33,8 @@ def label_options(dataset: str) -> dict[str, str]:
     if labels.has_imported(cfg.store_dir, dataset):
         opts[labels.IMPORTED] = "Imported annotations"
     for name in labels.list_sets(cfg.store_dir, dataset):
+        if labels.is_practice(cfg.store_dir, dataset, name):
+            continue          # practice labels are for learning, never ground truth
         opts[f"{name}@working"] = f"{name} — working copy"
         for v in reversed(labels.versions(cfg.store_dir, dataset, name)):
             opts[f"{name}@v{v}"] = f"{name} — v{v} (published)"
@@ -44,7 +46,8 @@ def default_labels(dataset: str, opts: dict[str, str]) -> str | None:
     changed set's working copy."""
     if labels.IMPORTED in opts:
         return labels.IMPORTED
-    sets = labels.list_sets(cfg.store_dir, dataset)
+    sets = [n for n in labels.list_sets(cfg.store_dir, dataset)
+            if not labels.is_practice(cfg.store_dir, dataset, n)]
     if sets:
         newest = max(sets, key=lambda n: max(
             (p.stat().st_mtime for p in labels.set_dir(cfg.store_dir, dataset, n).iterdir()),

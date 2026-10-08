@@ -97,4 +97,14 @@ Every dataset goes through the same steps, from the **Home** page:
     )
 
 
+def welcome_again() -> None:
+    from bex import prefs
+    st.divider()
+    if st.button("Show the welcome again", icon="👋"):
+        prefs.put(cfg.store_dir, "welcome_seen", False)
+        st.session_state.pop("_welcome_shown", None)
+        st.switch_page("ui/pages/home.py")
+
+
 render()
+welcome_again()

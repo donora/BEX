@@ -56,8 +56,14 @@ def set_dataset_meta(store_dir: str | Path, name: str, **values) -> None:
     _meta_path(store_dir, name).write_text(json.dumps(meta, indent=2) + "\n")
 
 
+def real_sets(store_dir: str | Path, name: str) -> list[str]:
+    """Label sets that are ground truth candidates — not practice sets."""
+    return [s for s in labels.list_sets(store_dir, name)
+            if not labels.is_practice(store_dir, name, s)]
+
+
 def has_labels(store_dir: str | Path, name: str) -> bool:
-    return labels.has_imported(store_dir, name) or bool(labels.list_sets(store_dir, name))
+    return labels.has_imported(store_dir, name) or bool(real_sets(store_dir, name))
 
 
 def progress(store_dir: str | Path, cache_dir: str | Path, name: str) -> dict:
@@ -85,7 +91,7 @@ def progress(store_dir: str | Path, cache_dir: str | Path, name: str) -> dict:
     else:
         steps["models"] = ("todo", "no model has been run yet")
 
-    sets = labels.list_sets(store_dir, name)
+    sets = real_sets(store_dir, name)
     if labels.has_imported(store_dir, name) and not sets:
         steps["labelled"] = ("done", "came with annotations")
     elif sets:

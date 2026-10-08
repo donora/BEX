@@ -1,6 +1,6 @@
 """BEX · Home — every dataset and how far through the flow it is (V1.2 F0, F1)."""
 from ui.common import *  # noqa: F403 — the shared app toolkit
-from bex import flow, runners
+from bex import flow, prefs, runners
 from bex.profiles import ProfileError, profile_from_csv, save_profile, suggest_profile
 from ui import sidebar
 
@@ -58,9 +58,9 @@ def go(dataset: str, page: str, view: str | None = None) -> None:
 
 def labels_fact(d: str, recs: pl.DataFrame) -> str:
     """'labels: none yet' / 'every recording (imported)' / '42 min in 18 recordings (set)'."""
-    if labels.has_imported(cfg.store_dir, d) and not labels.list_sets(cfg.store_dir, d):
+    sets = flow.real_sets(cfg.store_dir, d)
+    if labels.has_imported(cfg.store_dir, d) and not sets:
         return "labels: every recording (imported)"
-    sets = labels.list_sets(cfg.store_dir, d)
     if not sets:
         return "labels: none yet"
     t = labels.truth_from_set(labels.load_set(cfg.store_dir, d, sets[-1]), recs, "")
@@ -374,6 +374,60 @@ def models_panel(d: str, n: int, ready: bool) -> None:
         st.rerun(scope="app")
 
 
+TOUR_URL = "https://github.com/donora/bex/blob/main/TOUR.md"
+
+
+def seen_welcome() -> None:
+    prefs.put(cfg.store_dir, "welcome_seen", True)
+    st.session_state["_welcome_shown"] = True
+
+
+@st.dialog("Welcome to BEX", width="large")
+def welcome(datasets: list[str]) -> None:
+    """The first visit: what BEX is for, and a way in."""
+    st.markdown(
+        "**BEX helps you choose how to turn bird-ID models' output into results you "
+        "can trust.** You run BirdNET and Perch over your recordings, label a small "
+        "random sample yourself, and BEX measures how often each model is right on "
+        "*your* recordings — then applies the setup you choose to the rest, with "
+        "error bars.\n\n"
+        "Each dataset goes through the same steps, shown along the top: "
+        "**1 · Label → 2 · Explorer → 3 · Analysis → 4 · Survey protocol**.")
+    demo = next((d for d in datasets if labels.has_imported(cfg.store_dir, d)), None)
+    st.markdown("##### Where would you like to start?")
+    a, b = st.columns(2)
+    if demo:
+        with a.container(border=True):
+            st.markdown(f"**Try it on the demo data** — *{demo}*, recordings with "
+                        "expert labels.")
+            if st.button("Practise labelling", type="primary", key="w_practise",
+                         width="stretch", help="Label a few minutes and see how your "
+                         "labels compare with the experts'."):
+                seen_welcome()
+                st.session_state["dataset"] = demo
+                st.switch_page("ui/pages/label.py")
+            if st.button("Explore what the models found", key="w_explore",
+                         width="stretch"):
+                seen_welcome()
+                st.session_state["dataset"] = demo
+                st.switch_page("ui/pages/explorer.py")
+    else:
+        a.info("For demo data with expert labels, run `bex ingest-sne` (see the "
+               "README).")
+    with b.container(border=True):
+        st.markdown("**Use your own recordings** — a folder of audio files, anywhere "
+                    "on this computer or a drive.")
+        if st.button("Add a dataset", type="primary", key="w_add", width="stretch"):
+            seen_welcome()
+            st.session_state["home_open_add"] = True
+            st.rerun()
+        st.link_button("Read the tour first", TOUR_URL, width="stretch")
+    st.caption("This shows once. Bring it back from the About page.")
+    if st.button("Close", key="w_close"):
+        seen_welcome()
+        st.rerun()
+
+
 def render() -> None:
     masthead()
     st.markdown(
@@ -386,6 +440,10 @@ def render() -> None:
     if flash:
         st.success(flash)
     datasets = ingest.list_datasets(cfg.store_dir)
+    if (not prefs.get(cfg.store_dir, "welcome_seen")
+            and not st.session_state.get("_welcome_shown")):
+        st.session_state["_welcome_shown"] = True      # once per visit, even if dismissed
+        welcome(datasets)
 
     st.markdown("### Your datasets")
     if not datasets:
@@ -394,7 +452,8 @@ def render() -> None:
     for d in datasets:
         dataset_card(d)
 
-    with st.expander("➕ Add a dataset", expanded=not datasets):
+    with st.expander("➕ Add a dataset",
+                     expanded=not datasets or st.session_state.pop("home_open_add", False)):
         add_dataset()
     with st.expander("📄 Upload a plausibility profile"):
         upload_profile()

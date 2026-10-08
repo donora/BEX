@@ -965,3 +965,95 @@ def import_boxes(store_dir: str | Path, dataset: str, name: str, boxes: pl.DataF
         reopen_reason=pl.lit("")).cast(CHUNKS_SCHEMA)
     save_set(store_dir, ls)
     return ls
+
+
+# --------------------------------------------------------------------------- #
+# Practice (V1.2 tutorial): label minutes the experts already did, and compare
+# --------------------------------------------------------------------------- #
+
+def practice_name(labeller: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.\-]+", "-", labeller.strip().lower()).strip("-") or "me"
+    return f"practice-{slug}"[:64]
+
+
+def is_practice(store_dir: str | Path, dataset: str, name: str) -> bool:
+    """A practice set is for learning: compared with the dataset's imported
+    annotations as you go, and never offered as ground truth."""
+    p = set_dir(store_dir, dataset, name) / "meta.json"
+    return p.exists() and bool(json.loads(p.read_text()).get("practice"))
+
+
+def create_practice(store_dir: str | Path, dataset: str, labeller: str,
+                    recordings: pl.DataFrame, minutes: int = 5) -> LabelSet:
+    """A practice set for this labeller (or the existing one), with a few random
+    minutes from recordings that have expert labels."""
+    if not has_imported(store_dir, dataset):
+        raise ValueError(f"{dataset!r} has no expert annotations to practise against")
+    name = practice_name(labeller)
+    if (set_dir(store_dir, dataset, name) / "meta.json").exists():
+        return load_set(store_dir, dataset, name)
+    ls = create_set(store_dir, dataset, name, labeller)
+    ls.meta["practice"] = True
+    (set_dir(store_dir, dataset, name) / "meta.json").write_text(
+        json.dumps(ls.meta, indent=2) + "\n")
+    ls.sample = draw_sample(recordings.filter(pl.col("labelled")), minutes, seed=0)
+    save_set(store_dir, ls)
+    return ls
+
+
+def _overlaps(a0, a1, b0, b1, floor: float) -> bool:
+    ov = min(a1, b1) - max(a0, b0)
+    return ov > 0 and ov >= min(floor, a1 - a0, b1 - b0) - 1e-9
+
+
+def compare_to_reference(mine: pl.DataFrame, ref: pl.DataFrame, recording_id: str,
+                         start_s: float, end_s: float, min_overlap_s: float = 0.5) -> dict:
+    """Your boxes in one minute against the experts' (practice feedback).
+
+    Each expert box is **found** (one of your boxes overlaps it in time, same
+    species), **named differently** (overlapped, but you chose another
+    species — your choice is given), or **missed**. Each of your boxes that
+    matches no expert box of its species is **extra** — a bird the experts did
+    not label there, or one named differently. Overlap uses the same floor as
+    scoring: min(0.5 s, either box's length).
+    """
+    def in_minute(df):
+        return (df.filter((pl.col("recording_id") == recording_id)
+                          & (pl.col("end_s") > start_s) & (pl.col("start_s") < end_s))
+                  .sort("start_s").to_dicts())
+    you, exp = in_minute(mine), in_minute(ref)
+    used = set()
+    calls = []
+    for e in exp:
+        same = [i for i, y in enumerate(you) if y["species_key"] == e["species_key"]
+                and _overlaps(e["start_s"], e["end_s"], y["start_s"], y["end_s"],
+                              min_overlap_s)]
+        other = [y["species_key"] for y in you if y["species_key"] != e["species_key"]
+                 and _overlaps(e["start_s"], e["end_s"], y["start_s"], y["end_s"],
+                               min_overlap_s)]
+        if same:
+            used.update(same)
+            outcome, yours = "found", e["species_key"]
+        elif other:
+            outcome, yours = "named differently", other[0]
+        else:
+            outcome, yours = "missed", None
+        calls.append({**{k: e[k] for k in ("start_s", "end_s", "low_hz", "high_hz",
+                                           "species_key")},
+                      "outcome": outcome, "yours": yours})
+    extra = [y for i, y in enumerate(you) if i not in used
+             and not any(y["species_key"] == e["species_key"]
+                         and _overlaps(e["start_s"], e["end_s"], y["start_s"],
+                                       y["end_s"], min_overlap_s) for e in exp)]
+    exp_species = sorted({e["species_key"] for e in exp})
+    found_species = sorted({c["species_key"] for c in calls if c["outcome"] == "found"})
+    return {
+        "calls": calls,
+        "extra": extra,
+        "expert_species": exp_species,
+        "found_species": found_species,
+        "missed_species": [s for s in exp_species if s not in found_species],
+        "extra_species": sorted({y["species_key"] for y in extra} - set(exp_species)),
+        "n_found": sum(c["outcome"] == "found" for c in calls),
+        "n_calls": len(calls),
+    }

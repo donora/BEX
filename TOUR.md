@@ -7,9 +7,16 @@ To try it on your own recordings, see the [README](README.md).
 
 ![How BEX works: bring your data, run models, explore each, compare, decide and apply](assets/mission_flow.svg)
 
-The idea: run your recordings through several models side by side, score each
-against the same ground truth, and settle on a processing pipeline (model,
-thresholds, filter) with a known precision and recall for every species.
+The idea: run your recordings through several models side by side, label a
+random sample of them yourself, score every model against those labels, and
+settle on a processing pipeline (model, thresholds, filter, survey rule) with a
+known precision and recall — and error bars — that you can then run over the
+rest of your recordings.
+
+Any dataset can be looked at two ways, and you can switch between them at any
+time: **labelled data, scored** (only what has been labelled, every number
+judged against the labels) or **all recordings, unscored** (what the models
+report everywhere, with no right or wrong).
 
 ---
 
@@ -17,33 +24,93 @@ thresholds, filter) with a known precision and recall for every species.
 
 ![The BEX home page](docs/tour/home.png)
 
-Every dataset, with a strip showing how far through the flow it is, and the
-button to continue. New datasets are added here (a folder of recordings), and
-their spectrograms and model runs started. The bar across the top follows the
-flow, numbered left to right: **1 · Label** to make ground truth, **2 ·
-Explorer** to look and listen, **3 · Analysis** to compare the models, and **4 ·
-Survey protocol** to decide how to turn detections into species lists. *Set up*
-and *About* sit to the right.
-
-*(v1.2: the screenshots on this page predate the new Home and Label pages.)*
+1. **The flow**, numbered left to right: *1 · Label* to make ground truth,
+   *2 · Explorer* to look and listen, *3 · Analysis* to compare the models, and
+   *4 · Survey protocol* to decide how to turn detections into species lists.
+2. **What you are looking at**: the current dataset and its view — *scored*
+   (labelled data) or *unscored* (all recordings). Click it to switch.
+3. **Each dataset's progress** through the same steps: *Add → Run models →
+   Label → Explore → Analyse → Survey protocol → Apply*. A tick is done, a half
+   circle under way; the outlined step is the next one. Hover a step for detail.
+4. **Continue** goes to the next step. *Label* and *Explore all recordings* are
+   always there: neither closes off the other.
+5. **A dataset part-way through labelling**: here 3 of 5 sampled minutes done.
+6. **Profile, spectrograms and models**: the dataset's plausibility profile,
+   its spectrograms and its model runs, each with a progress bar and a button.
+   For a new dataset these sit open in the card until they are done; a file the
+   audio library cannot read is repaired here, before a model run trips over it.
+7. **Add a dataset**: a folder of recordings, a site name, its location and a
+   plausibility profile (BEX suggests one from the location).
+8. **Upload a plausibility profile**: your own species list for a site, as a
+   CSV of scientific or common names with an optional tier — the UK starter
+   list downloads as a template.
 
 ---
 
 ## Label
 
-Label a random sample of your own recordings, a minute at a time. *Plan and
-sample* asks what you want to find out and draws a stratified random sample of
-60 s chunks (spread over sites, times of day and recordings); *Label* serves
-them in order. Drag a box around each call on the spectrogram and name the
-species, listen with the player beneath, and **close** the chunk when every bird
-in it is labelled — only closed chunks count as ground truth. The navigator
-above shows a grey, species-free guide to where the models hear something
-bird-like, and nothing from the models appears on the spectrogram. *Progress*
-tracks minutes closed, coverage by site and time of day, and the species
-accumulation curve; *Plan and sample → How much more?* measures how much your
-recordings vary and projects how much more labelling your target needs.
-*Publish and share* freezes versions, exports in SNE's columns and imports
-CSV, Raven and Audacity files.
+Ground truth for your own recordings, a minute at a time. BEX picks the minutes
+at random — balanced across sites, times of day and recordings — because
+labelling only where the models fired would leave out the birds they miss.
+
+![Labelling a minute](docs/tour/label-chunk.png)
+
+1. **Moving around**: ◀ ▶ step to the previous or next minute of this
+   recording; *Next chunk in the sample* goes to the next random minute.
+   *Choose a chunk by hand* opens any minute (marked as chosen by hand).
+2. **Where you are**: the recording, the minute, its place in the sample, and
+   whether it is open or closed.
+3. **A guide to where the recording is busy**: grey bars where BirdNET or Perch
+   hear *something* bird-like. Deliberately loose, and it names no species.
+4. **Every minute of the recording**, coloured by state — closed (green), in
+   the sample (blue), not sampled. Click one to open it.
+5. **A box drawn with two clicks**: one corner, then the opposite one. The red
+   ✕ throws it away.
+6. **The neighbouring minutes**, shaded either side. A call that crosses the
+   minute can be boxed into them, or finished in the next minute (▶, then the
+   second click).
+7. **The player**, on the same time axis. *▶ box* plays just the box you have
+   drawn (or the one selected in the box list), marked on the timeline.
+8. **The new box**, waiting for its species.
+
+![Suggested birds for a box](docs/tour/label-suggest.png)
+
+1. **The species**: type to search the models' whole vocabulary. A bird you
+   hear but cannot name is *Unknown bird*.
+2. **💡 Suggest birds**, only after you have drawn a box: what the models heard
+   inside it, best first, with models that agree counting for more.
+3. **Each suggestion** with every model's rank for it, and ⚠ where the bird is
+   not on the site's plausibility profile. Here American Robin — which is what
+   the SNE annotators labelled this call.
+4. **Reference recordings** on Xeno-Canto, to compare by ear.
+5. **Use** fills in the species.
+
+A box made after viewing suggestions is recorded as such: labels that lean on
+the models flatter them a little when they are scored, so the share is kept
+and shown. Close the minute once every bird you heard has a box — only closed
+minutes count as ground truth, and a closed minute with no boxes means
+*listened, no birds*.
+
+![What to label](docs/tour/label-plan.png)
+
+1. **How many minutes**: 5 is a good start; add more whenever you like.
+2. **How far you are** through the sample.
+3. **How much more?** Once a few recordings have labels, BEX measures how much
+   they vary and projects how many more you need for a given precision.
+
+![Progress](docs/tour/label-progress.png)
+
+1. **What is labelled**: minutes, recordings, sites, species, and the sample.
+2. **How many boxes were made with the models' suggestions.**
+3. **Species found against minutes labelled**: when it flattens, more labelling
+   has stopped turning up new birds.
+4. **Coverage** by site and time of day — gaps here are gaps in what the
+   scores can say.
+5. **What has been found**, and roughly how much more labelling each species
+   needs to reach about 50 calls (enough to fit a threshold for it).
+
+*Publish and share* freezes a version of the labels to cite, exports them in
+SNE's CSV columns, and imports CSV, Raven and Audacity annotations.
 
 ---
 
@@ -54,16 +121,23 @@ every model's detections and the annotators' labels side by side.
 
 ![The Explorer's navigator and settings](docs/tour/explorer-navigator.png)
 
-1. **Experiment settings.** Dataset, models, plausibility profile and threshold
-   rule. They apply to every page, and stay put as you move between pages.
-2. **Recording, span and focus species.** Pick a recording, how much of it to
-   see at once, and optionally one bird to follow.
-3. **Ground truth over the whole recording.** Where the annotated birds are.
-4. **One row per model.** Above the line, what the model reported: blue right,
+1. **Looking at**: labelled data, scored, or all recordings, unscored.
+2. **Scored against**: which labels — a dataset's imported annotations, or a
+   label set you made (its working copy, or a published version).
+3. **What every number rests on**: the dataset, and how much of it is labelled.
+4. **Experiment settings**: models, plausibility profile and threshold rule.
+   They apply to every page, and stay put as you move between pages.
+5. **The view, on every page**, with a button to switch.
+6. **The same, in the top bar**.
+7. **Ground truth over the whole recording**: where the annotated birds are.
+8. **One row per model.** Above the line, what the model reported: blue right,
    orange wrong, purple a real bird its location filter would hide. Below the
-   line, the annotated birds it missed.
-5. **Where you are.** Click anywhere in the navigator to jump there.
-6. **Step through** a window or a whole span at a time.
+   line, the annotated birds it missed. Click anywhere to jump there.
+9. **Step through** a window or a whole span at a time.
+
+In the unscored view the same page shows what each model reported on every
+recording, with no right or wrong; a recording only partly labelled is shown
+that way too.
 
 ![The spectrogram, score lanes and audio player](docs/tour/explorer-spectrogram.png)
 
@@ -99,13 +173,25 @@ each species gets the threshold that keeps it at least 95% precise).
 
 ![One card per model](docs/tour/compare-cards.png)
 
-1. **When it reports a bird**: how often it is right.
-2. **False detections per hour** you would actually see.
-3. **When a bird is singing**: the share of annotated songs it finds. Counted
-   per song, so a 3 s and a 5 s model compare fairly.
-4. **Species by species**: one tick per species at the share of its songs found.
-   A tight cluster is a consistent model; a spread one is excellent on some
-   birds and deaf to others.
+1. **When it reports a bird**: how often it is right, and the false detections
+   per hour you would actually see.
+2. **When a bird is singing**: the share of annotated songs it finds. Counted
+   per song, so a 3 s and a 5 s model compare fairly. Below it, one tick per
+   species at the share of its songs found: a tight cluster is a consistent
+   model, a spread one excellent on some birds and deaf to others.
+3. **Every figure has an error bar**: the bracket is a 95% interval from
+   resampling recordings — how far the number could move on another set of
+   recordings like these.
+
+![Is one model better here?](docs/tour/compare-paired.png)
+
+**Is one model better here?** Each pair of models compared on the *same*
+recordings, which is a much sharper test than whether their own intervals
+overlap, because a hard recording is hard for both.
+
+1. **The difference, with its 95% interval.**
+2. **The verdict**: a model is *better* when the interval leaves out zero;
+   otherwise *no clear difference* — more labelled recordings would narrow it.
 
 ![Precision and recall](docs/tour/compare-pr.png)
 
@@ -248,6 +334,27 @@ Here only Perch (sigmoid) keeps its firm calls above 95% right on recordings
 the rule had not seen. **Full assessment** goes further: every recording takes a
 turn as the test recording, for steadier numbers and a measure of how stable
 the chosen rule is.
+
+---
+
+![Save a setup and apply it](docs/tour/survey-save.png)
+
+Once you have a rule you trust, **save it as a setup** and run it over every
+recording — the point of labelling a sample in the first place.
+
+1. **Which model** and a name.
+2. **What the setup measured**: its rule, and how often its firm calls were
+   right and how many birds it found after checking, on the held-out test
+   recordings, with 95% intervals. This is the claim every list it produces
+   carries.
+3. **Apply to every recording.**
+4. **Where each list comes from**: a recording labelled end to end keeps its
+   labels (an expert's list beats a model's); everywhere else the list is the
+   model's output, marked as such. (Every SNE recording is labelled, so all
+   are *labelled* here; on your own data most will be *model output*.)
+5. **The lists**, recording by recording, with the model's verdict beside each.
+6. **Download** the lists, and the claim that says what the model-output rows
+   can be trusted to mean. `bex survey` does the same from the command line.
 
 ---
 
