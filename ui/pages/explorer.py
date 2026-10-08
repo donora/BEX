@@ -4,6 +4,9 @@ from ui import sidebar
 
 
 def render(ctx) -> None:
+    from bex import flow
+    if not flow.dataset_meta(cfg.store_dir, ctx.dataset).get("explored"):
+        flow.set_dataset_meta(cfg.store_dir, ctx.dataset, explored=True)
     runs = ctx.runs
     dataset = ctx.dataset
     recordings = ctx.recordings
@@ -26,6 +29,16 @@ def render(ctx) -> None:
     duration = rec_row["duration_s"]
     span_s = c2.selectbox("Span (s)", [15, 30, 60, 120, 300], index=2,
                           key="explorer_span", persist_state="session")
+    # Right and wrong need the whole recording labelled: a detection in a chunk
+    # nobody has closed is not wrong, just not yet judged.
+    t_obj = ctx.truth_obj
+    if t_obj is not None and rec_id not in t_obj.complete:
+        done = t_obj.covered_s.get(rec_id, 0.0)
+        st.caption(f"ℹ️ This recording is {'partly labelled' if done else 'not labelled'} "
+                   f"in *{t_obj.label}* ({done / 60:.0f} of {duration / 60:.0f} min "
+                   "closed), so it is shown unscored: what each model reported, "
+                   "with no right or wrong.")
+        annotations = None
 
     # Every included run that has scored THIS recording — a run that has not
     # reached it would draw an empty lane and read as a silent model.

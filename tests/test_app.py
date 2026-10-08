@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-PAGES = ["home", "explorer", "about", "compare", "survey", "scorecard", "forensics",
+PAGES = ["home", "label", "explorer", "about", "compare", "survey", "scorecard", "forensics",
          "recordings", "models", "thresholds"]
 
 
@@ -53,7 +53,7 @@ def test_home_is_the_landing_page_and_leads_to_the_explorer():
     at = open_page("home")
     assert any("ioacoustics" in str(m.value) and "plorer" in str(m.value)
                for m in at.markdown)
-    go = next(b for b in at.button if b.label == "Open the Explorer")
+    go = next(b for b in at.button if b.label == "Explore all recordings")
     go.click().run()
     assert not at.exception
     assert any(sb.label == "Recording" for sb in at.selectbox), "did not reach the Explorer"

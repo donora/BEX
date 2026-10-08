@@ -6,6 +6,7 @@ from ui.sidebar import NO_SET
 
 def render(ctx) -> None:
     dataset = ctx.dataset
+    truth_ref = ctx.truth_ref
     recordings = ctx.recordings
     annotations = ctx.annotations
     has_alignment = ctx.has_alignment
@@ -83,7 +84,7 @@ def render(ctx) -> None:
         for m in included:
             r = resolved[m.run_id]
             card = (get_scorecard(m.run_id, dataset, "native", p_floor, min_support,
-                                  min_pos) if has_alignment(m.run_id) else None)
+                                  min_pos, truth_ref) if has_alignment(m.run_id) else None)
             for row in r.table.iter_rows(named=True):
                 pr = (th.point_at(card["curves"][row["species_key"]], row["theta"])
                       if card and row["species_key"] in card["curves"] else {})
@@ -142,13 +143,14 @@ def render(ctx) -> None:
             curve_rows, point_rows = [], []
             for m in included:
                 label = run_label[m.run_id]
-                cp = (get_curve_points(m.run_id, dataset, pick, p_floor, min_support)
+                cp = (get_curve_points(m.run_id, dataset, pick, p_floor, min_support,
+                                       truth_ref)
                       if has_alignment(m.run_id) else None)
                 if cp is None:
                     continue
                 curve_rows.append(cp["frame"].assign(model=label))
                 card = get_scorecard(m.run_id, dataset, "native", p_floor,
-                                     min_support, min_pos)
+                                     min_support, min_pos, truth_ref)
                 curve = card["curves"][pick]
                 for name, t in [*cp["candidates"].items(),
                                 ("in force", resolved[m.run_id].theta_of(pick))]:
@@ -194,7 +196,7 @@ def render(ctx) -> None:
                     now_theta = r.theta_of(pick)
                     now_src = row["source"][0] if len(row) else r.default_source
                     cp = (get_curve_points(m.run_id, dataset, pick, p_floor,
-                                           min_support)
+                                           min_support, truth_ref)
                           if has_alignment(m.run_id) else None)
                     opts = ["use the rule"] + [f"{n} (θ = {t:.4f})" for n, t in
                                                (cp["candidates"].items() if cp else [])]

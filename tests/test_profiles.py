@@ -77,3 +77,32 @@ def test_unknown_species_reported_not_dropped():
     assert report == ["Imaginarius birdus"]
     # ...and the species is still in the profile, still plausible.
     assert p.tier_of("Imaginarius birdus") == 1
+
+
+def test_a_profile_is_suggested_from_a_location_never_assumed(tmp_path):
+    from bex.profiles import suggest_profile
+    for name, box in [("big", "[0, 0, 60, 60]"), ("small", "[50, 0, 55, 5]"), ("nobox", "")]:
+        d = tmp_path / name
+        d.mkdir()
+        (d / "profile.toml").write_text(
+            f'[profile]\ndisplay_name = "{name}"\n' + (f"bbox = {box}\n" if box else ""))
+        (d / "tiers.csv").write_text("species_key,tier\n")
+    assert suggest_profile(tmp_path, 52, 1) == "small"      # the tighter fit wins
+    assert suggest_profile(tmp_path, 10, 10) == "big"
+    assert suggest_profile(tmp_path, -30, 100) is None       # nothing covers it: ask
+
+
+def test_an_uploaded_list_is_read_forgivingly_and_saved(tmp_path):
+    from bex.profiles import load_profile, profile_from_csv, save_profile, suggest_profile
+    lookup = {"european robin": "Erithacus rubecula", "erithacus rubecula": "Erithacus rubecula"}
+    p, unmapped = profile_from_csv(
+        "common_name,tier,note\nEuropean Robin,1,garden\nWren-ish thing,2,\n",
+        "mine", "My site", lookup)
+    assert unmapped == ["Wren-ish thing"]
+    p, unmapped = profile_from_csv("species_key\nErithacus rubecula\nTurdus merula\n",
+                                   "mine", "My site", lookup)
+    assert unmapped == [] and p.tiers == {"Erithacus rubecula": 1, "Turdus merula": 1}
+    save_profile(tmp_path, p, bbox=(50, -2, 52, 0))
+    back = load_profile(tmp_path / "mine")
+    assert back.tiers == p.tiers and back.display_name == "My site"
+    assert suggest_profile(tmp_path, 51, -1) == "mine"

@@ -39,6 +39,8 @@ def player_html(
     left_frac: float,
     right_frac: float,
     ticks: list[float],
+    window_label: str = "window",
+    clock: bool = False,
 ) -> str:
     """The player as a self-contained HTML snippet.
 
@@ -46,21 +48,32 @@ def player_html(
     recording time of the audio's first sample. `left_frac` / `right_frac` are
     where the figure's plotting area starts and ends as fractions of its width
     (matplotlib's axes box), so the timeline sits exactly under the time axis.
+
+    `window_label` names the highlighted stretch and its play button ("window"
+    in the Explorer, "box" when labelling). `clock` writes times as m:ss, to
+    match a figure whose axis does, instead of plain seconds.
     """
     span = max(t1 - t0, 1e-9)
+
+    def tm(t: float, tenths: bool = False) -> str:
+        if not clock:
+            return f"{t:g}"
+        sec = f"{t % 60:04.1f}" if tenths else f"{int(t % 60):02d}"
+        return f"{int(t // 60)}:{sec}"
+    unit = "" if clock else " s"
     pct = lambda t: 100.0 * (min(max(t, t0), t1) - t0) / span
     tick_html = "".join(
-        f'<span class="tk" style="left:{pct(t):.3f}%">{t:g}</span>'
+        f'<span class="tk" style="left:{pct(t):.3f}%">{tm(t)}</span>'
         for t in ticks if t0 <= t <= t1)
     win_html, win_btn = "", ""
     if window:
         w0, w1 = window
         win_html = (f'<div class="win" style="left:{pct(w0):.3f}%;'
                     f'width:{pct(w1) - pct(w0):.3f}%"></div>')
-        win_btn = (f'<button id="pw" title="Play only the inspected window">'
-                   f'▶ window {w0:g}–{w1:g} s</button>')
+        win_btn = (f'<button id="pw" title="Play only the {window_label}">'
+                   f'▶ {window_label} {tm(w0, True)}–{tm(w1, True)}{unit}</button>')
     cfg = json.dumps({"t0": t0, "t1": t1, "c0": clip_start,
-                      "w": list(window) if window else None})
+                      "w": list(window) if window else None, "clock": clock})
     src = "data:audio/mpeg;base64," + base64.b64encode(audio).decode()
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
 body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -82,7 +95,7 @@ button:hover {{ border-color:#2a78d6; }}
 </style></head><body><div id="wrap">
 <div id="bar" title="Click to play from here">{win_html}<div id="head"></div></div>
 <div id="ticks">{tick_html}</div>
-<div id="ctl"><button id="pa" title="Play the whole span">▶ span {t0:g}–{t1:g} s</button>
+<div id="ctl"><button id="pa" title="Play the whole span">▶ span {tm(t0)}–{tm(t1)}{unit}</button>
 {win_btn}<button id="st" title="Stop">■ stop</button><span id="now"></span></div>
 </div>
 <audio id="a" preload="auto" src="{html.escape(src)}"></audio>
@@ -107,7 +120,9 @@ function frame() {{
   if (!a.paused || a.currentTime > 0) {{
     head.style.display = "block";
     head.style.left = (100 * (t - C.t0) / (C.t1 - C.t0)) + "%";
-    now.textContent = t.toFixed(1) + " s";
+    now.textContent = C.clock
+      ? Math.floor(t / 60) + ":" + (t % 60).toFixed(1).padStart(4, "0")
+      : t.toFixed(1) + " s";
   }}
   if (stopAt !== null && t >= stopAt) {{ a.pause(); stopAt = null; }}
   requestAnimationFrame(frame);

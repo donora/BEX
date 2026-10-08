@@ -99,16 +99,20 @@ def load_profile(profile_dir: str | Path) -> Profile:
     )
 
 
-def save_profile(profiles_dir: str | Path, profile: Profile) -> Path:
+def save_profile(profiles_dir: str | Path, profile: Profile,
+                 bbox: tuple[float, float, float, float] | None = None) -> Path:
+    import json
     d = Path(profiles_dir) / profile.name
     d.mkdir(parents=True, exist_ok=True)
+    q = json.dumps   # a JSON string is a valid TOML basic string, quotes escaped
     toml = (
         "[profile]\n"
-        f'display_name = "{profile.display_name}"\n'
-        f'region = "{profile.region}"\n'
-        f'source = "{profile.source}"\n'
-        f'citation = "{profile.citation}"\n'
-        f'date = "{profile.date}"\n'
+        f"display_name = {q(profile.display_name)}\n"
+        f"region = {q(profile.region)}\n"
+        f"source = {q(profile.source)}\n"
+        f"citation = {q(profile.citation)}\n"
+        f"date = {q(profile.date)}\n"
+        + (f"bbox = [{', '.join(f'{v:g}' for v in bbox)}]\n" if bbox else "")
     )
     (d / "profile.toml").write_text(toml)
 
@@ -127,6 +131,81 @@ def list_profiles(profiles_dir: str | Path) -> list[str]:
     if not d.exists():
         return []
     return sorted(p.name for p in d.iterdir() if (p / "profile.toml").exists())
+
+
+def profile_from_csv(text: str, name: str, display_name: str,
+                     lookup: dict[str, str], region: str = "", source: str = "",
+                     ) -> tuple[Profile, list[str]]:
+    """An uploaded species list -> a Profile, and the names that matched no
+    species (the caller refuses the upload while any remain: never dropped).
+
+    Forgiving about the shape, strict about the content. The species column may
+    be `species_key`, `scientific_name`, `species` or `common_name`; names are
+    matched through `lookup` (lower-cased scientific and common names -> key),
+    and a well-formed scientific name nobody knows is kept as written.
+    `tier` is optional (1, regular, when missing); other columns are kept.
+    """
+    import io
+    from datetime import date
+    rows = list(csv.DictReader(io.StringIO(text.lstrip("\ufeff"))))
+    if not rows:
+        raise ProfileError("the file has no rows")
+    cols = list(rows[0])
+    sp_col = next((c for c in ("species_key", "scientific_name", "species",
+                               "common_name") if c in cols), None)
+    if sp_col is None:
+        raise ProfileError(f"no species column — expected species_key (or "
+                           f"scientific_name / common_name); got {cols}")
+    tiers, extras, unmapped = {}, {}, []
+    for i, r in enumerate(rows, start=2):
+        raw = (r.get(sp_col) or "").strip()
+        if not raw:
+            continue
+        key = lookup.get(raw.lower())
+        if key is None and sp_col != "common_name" and len(raw.split()) >= 2 \
+                and raw[0].isupper():
+            key = normalise_key(raw)          # a scientific name: keep it as written
+        if key is None:
+            unmapped.append(raw)
+            continue
+        t = (r.get("tier") or "").strip()
+        try:
+            tier = int(t) if t else 1
+        except ValueError:
+            raise ProfileError(f"row {i}: tier {t!r} is not 0, 1, 2 or 3")
+        if tier not in VALID_TIERS:
+            raise ProfileError(f"row {i}: tier {tier} is not 0, 1, 2 or 3")
+        tiers[key] = min(tier, tiers.get(key, tier))
+        extras[key] = {c: v for c, v in r.items()
+                       if c not in (sp_col, "tier", "species_key") and v}
+    if not tiers and not unmapped:
+        raise ProfileError("no species found in the file")
+    return Profile(name=name, display_name=display_name or name, region=region,
+                   source=source or "uploaded in the app", date=date.today().isoformat(),
+                   tiers=tiers, extras=extras), sorted(set(unmapped))
+
+
+def profile_bbox(profile_dir: str | Path) -> tuple[float, float, float, float] | None:
+    """The area a profile is meant for, if its profile.toml says:
+    `bbox = [min_lat, min_lon, max_lat, max_lon]`. Optional — only used to
+    suggest a profile for a new dataset's location."""
+    p = Path(profile_dir) / "profile.toml"
+    with open(p, "rb") as f:
+        box = tomllib.load(f).get("profile", {}).get("bbox")
+    if not box or len(box) != 4:
+        return None
+    return tuple(float(v) for v in box)
+
+
+def suggest_profile(profiles_dir: str | Path, lat: float, lon: float) -> str | None:
+    """The profile whose area contains (lat, lon) — the smallest, when several
+    do — or None. A suggestion, never a silent default: the caller shows it."""
+    hits = []
+    for name in list_profiles(profiles_dir):
+        box = profile_bbox(Path(profiles_dir) / name)
+        if box and box[0] <= lat <= box[2] and box[1] <= lon <= box[3]:
+            hits.append(((box[2] - box[0]) * (box[3] - box[1]), name))
+    return min(hits)[1] if hits else None
 
 
 def unknown_species(profile: Profile, canonical_keys: set[str]) -> list[str]:

@@ -4,3 +4,4 @@ region = "Lassen & Plumas National Forests, California, USA"
 source = "The SNE dataset's own species list (data/species.csv) — every species annotated as present in the 33 h of audio, so any geofilter suppression of these is a false-suppression candidate."
 citation = "Sierra Nevada soundscapes (2018), Zenodo record 7050014; BirdSet benchmark (Rauch et al., 2024)"
 date = "2026-09-07"
+bbox = [35.5, -122.5, 41.5, -117.5]   # the Sierra Nevada and Cascades of California

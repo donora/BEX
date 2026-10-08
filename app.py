@@ -15,6 +15,7 @@ st.set_page_config(page_title="BEX — Bioacoustics Explorer", page_icon="🐦",
 
 PAGES = {
     "home": st.Page("ui/pages/home.py", title="Home", icon="🏠", default=True),
+    "label": st.Page("ui/pages/label.py", title="Label", icon="🏷️"),
     "explorer": st.Page("ui/pages/explorer.py", title="Explorer", icon="🔎"),
     "compare": st.Page("ui/pages/compare.py", title="Compare models"),
     "scorecard": st.Page("ui/pages/scorecard.py", title="Species scorecard"),
@@ -32,8 +33,9 @@ page = st.navigation(list(PAGES.values()), position="hidden")
 
 
 def nav_bar() -> None:
-    """The workflow, numbered left to right — 1 look, 2 compare, 3 decide — the
-    three steps in the accent colour; setting up and About to the right."""
+    """The flow for one dataset, numbered left to right — 1 label, 2 look,
+    3 compare, 4 decide — the steps in the accent colour, the current dataset
+    named beside them; setting up and About to the right (V1.2 F2)."""
     from ui.common import brand
     c = brand()
     # The accent pill is the light theme's petrol teal with white text in both
@@ -63,28 +65,48 @@ def nav_bar() -> None:
             f".st-key-nav_step{i} [data-testid='stPageLink'] a:hover,"
             f".st-key-nav_step{i} [data-testid='stPopover'] button:hover{{"
             f"background:{accent_deep}}}"
-            for i in (1, 2, 3)) +
+            for i in (1, 2, 3, 4)) +
+        ".st-key-nav_view button{font-weight:500; font-size:0.82rem; opacity:0.85;"
+        "white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%}"
         ".st-key-bex_nav{border-bottom:1px solid rgba(128,128,128,0.25);"
         "padding-bottom:0.35rem; margin-bottom:0.6rem}"
         "</style>", unsafe_allow_html=True)
     with st.container(key="bex_nav"):
-        cols = st.columns([0.85, 1.15, 1.25, 1.6, 1.7, 1.0, 0.85],
+        cols = st.columns([0.75, 0.9, 1.05, 1.1, 1.5, 1.85, 0.8, 0.75],
                           vertical_alignment="center", gap="small")
         cols[0].page_link(PAGES["home"], label="Home")
         with cols[1].container(key="nav_step1"):
-            st.page_link(PAGES["explorer"], label="1 · Explorer")
-        with cols[2].container(key="nav_step2"), st.popover("2 · Analysis"):
+            st.page_link(PAGES["label"], label="1 · Label")
+        with cols[2].container(key="nav_step2"):
+            st.page_link(PAGES["explorer"], label="2 · Explorer")
+        with cols[3].container(key="nav_step3"), st.popover("3 · Analysis"):
             st.page_link(PAGES["compare"], label="Compare models")
             st.page_link(PAGES["scorecard"], label="Species scorecard")
             st.page_link(PAGES["forensics"], label="Geofilter forensics",
                          help="A deep dive into what a location filter hides.")
-        with cols[3].container(key="nav_step3"):
-            st.page_link(PAGES["survey"], label="3 · Survey protocol")
-        with cols[5].popover("Set up"):
+        with cols[4].container(key="nav_step4"):
+            st.page_link(PAGES["survey"], label="4 · Survey protocol")
+        current = st.session_state.get("dataset")
+        if not current:
+            from ui.common import cfg, ingest
+            current = next(iter(ingest.list_datasets(cfg.store_dir)), None)
+        if current:
+            # The view, said everywhere and switchable from anywhere (V1.2 F0).
+            from ui import sidebar
+            view = sidebar.current_view(current)
+            other = (sidebar.VIEW_ALL if view == sidebar.VIEW_LABELLED
+                     else sidebar.VIEW_LABELLED)
+            short = "scored" if view == sidebar.VIEW_LABELLED else "unscored"
+            with cols[5].container(key="nav_view"):
+                st.button(f"{current} · {short}", key="nav_view_switch",
+                          on_click=sidebar.set_view, args=(current, other),
+                          help=f"Viewing {view.lower()}. Click to switch to "
+                               f"{other.lower()}.")
+        with cols[6].popover("Set up"):
             st.page_link(PAGES["recordings"], label="Recordings")
             st.page_link(PAGES["models"], label="Models")
             st.page_link(PAGES["thresholds"], label="Thresholds")
-        cols[6].page_link(PAGES["about"], label="About")
+        cols[7].page_link(PAGES["about"], label="About")
 
 
 nav_bar()

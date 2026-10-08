@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -752,6 +753,108 @@ def species_palette(*frames: pl.DataFrame,
     for k in ranked[len(CATEGORICAL):]:
         palette[k] = OTHER_COLOR
     return palette
+
+
+def mel_row_to_hz(row: float, meta: dict) -> float:
+    """The inverse of `hz_to_mel_row`: where on the cached spectrogram a box was
+    drawn, as a frequency (display-grade, as that function is)."""
+    import librosa
+
+    centres = librosa.mel_frequencies(
+        n_mels=int(meta["n_mels"]),
+        fmin=float(meta["fmin"]),
+        fmax=min(float(meta["fmax"]), meta["sr"] / 2),
+    )
+    return float(np.interp(row, np.arange(len(centres)), centres))
+
+
+_SPECIES_NAME = re.compile(r"^[A-Z][a-z-]+ [a-z-]+")
+
+
+def box_suggestions(matrices: dict, start_s: float, end_s: float,
+                    top: int = 10) -> pl.DataFrame:
+    """What the models heard inside a box the labeller drew — shown only when
+    asked for, after the box exists (V1.2 L5).
+
+    `matrices` maps a model label to that recording's full `store.ScoreMatrix`.
+    For each model, every species' best score over the windows overlapping the
+    box, ranked within that model. Scores are not comparable between models
+    (a sigmoid's 0.3 is not a softmax's 0.3), so models are combined by rank:
+    each contributes 1/rank, and species several models agree on rise to the
+    top. Sound-event classes (Perch's *Car*, BirdNET's *Engine*) are left out.
+
+    Returns species_key, `support` (the combined score), and per model
+    `<label> score` and `<label> rank`.
+    """
+    from .taxonomy import is_species
+
+    per_model = []
+    for label, sm in matrices.items():
+        w = np.asarray(sm.start_s, dtype=np.float64)
+        hit = (w < end_s) & (w + sm.window_s > start_s)
+        if not hit.any():
+            continue
+        best = sm.scores[hit].astype(np.float32).max(axis=0)
+        keys = np.array(sm.species_keys)
+        ok = np.array([is_species(k) for k in keys])
+        best, keys = best[ok], keys[ok]
+        order = np.argsort(-best, kind="stable")[: max(top * 3, 30)]
+        per_model.append(pl.DataFrame({
+            "species_key": keys[order],
+            f"{label} score": best[order].astype(np.float64),
+            f"{label} rank": np.arange(1, len(order) + 1, dtype=np.int64)}))
+    if not per_model:
+        return pl.DataFrame(schema={"species_key": pl.Utf8, "support": pl.Float64})
+    out = per_model[0]
+    for f in per_model[1:]:
+        out = out.join(f, on="species_key", how="full", coalesce=True)
+    ranks = [c for c in out.columns if c.endswith(" rank")]
+    out = out.with_columns(support=pl.sum_horizontal(
+        [(1.0 / pl.col(c)).fill_null(0.0) for c in ranks]))
+    return out.sort("support", descending=True).head(top)
+
+
+def activity_windows(det: pl.DataFrame, share: float) -> tuple[pl.DataFrame, float]:
+    """The labelling guide (V1.2 L4): windows where a model hears *something
+    bird-like*, with no species attached.
+
+    Each window's strongest score over species classes (Perch's sound-event
+    classes — engines, music — are not species names and are left out). The
+    bar is the score that the top `share` of all the model's windows in the
+    dataset clear, so the guide is permissive by construction and comparable
+    across models whose scores are on different scales. Returns the
+    highlighted windows (recording_id, start_s, end_s) and the bar used.
+    """
+    birds = det.filter(pl.col("species_key").str.contains(_SPECIES_NAME.pattern))
+    top = birds.group_by("recording_id", "start_s", "end_s").agg(
+        best=pl.col("score_raw").max())
+    if top.is_empty():
+        return top.select("recording_id", "start_s", "end_s"), float("nan")
+    bar = float(top["best"].quantile(1 - share, interpolation="higher"))
+    return (top.filter(pl.col("best") >= bar).select("recording_id", "start_s", "end_s")
+               .sort("recording_id", "start_s"), bar)
+
+
+def activity_bins(windows: pl.DataFrame, recording_id: str, duration: float,
+                  n_bins: int) -> pl.DataFrame:
+    """Share of each navigator bin that any guide window covers (0–1)."""
+    edges = np.linspace(0.0, duration, n_bins + 1)
+    covered = np.zeros(n_bins)
+    w = windows.filter(pl.col("recording_id") == recording_id)
+    if len(w):
+        # Merge overlapping windows first so two models agreeing are not counted twice.
+        spans = []
+        for s, e in w.sort("start_s").select("start_s", "end_s").iter_rows():
+            if spans and s <= spans[-1][1]:
+                spans[-1][1] = max(spans[-1][1], e)
+            else:
+                spans.append([s, e])
+        for s, e in spans:
+            lo = np.clip(np.minimum(e, edges[1:]) - np.maximum(s, edges[:-1]), 0, None)
+            covered += lo
+    width = np.diff(edges)
+    return pl.DataFrame({"bin_start_s": edges[:-1], "bin_end_s": edges[1:],
+                         "activity": np.clip(covered / width, 0, 1)})
 
 
 def hz_to_mel_row(hz: float, meta: dict) -> float:

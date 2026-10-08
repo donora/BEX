@@ -80,3 +80,29 @@ def repair_recording(src: str | Path, dst: str | Path) -> float:
         raise RuntimeError(f"{src}: wrote {frames} frames but file reads back {check.frames}")
     tmp.rename(dst)
     return frames / sr
+
+
+def build_mel(cache_dir: str | Path, store_dir: str | Path, dataset: str,
+              recording_id: str, rel_path: str, audio_root: str | Path) -> str:
+    """Build one recording's display spectrogram, repairing it first if
+    libsndfile cannot decode it. Returns 'cached', 'built' or 'repaired'.
+
+    Repairing here, at the first step that reads every file end to end, means
+    the model runners — which read through `ingest.resolve_audio` too — find a
+    clean copy waiting, instead of failing an hour into a run.
+    """
+    from . import ingest
+    from .melcache import build_one, mel_path
+
+    out = mel_path(cache_dir, dataset, recording_id)
+    if out.exists():
+        return "cached"
+    src = ingest.resolve_audio(store_dir, dataset, audio_root, recording_id, rel_path)
+    try:
+        build_one(src, out)
+        return "built"
+    except sf.LibsndfileError:
+        dst = ingest.repairs_dir(store_dir, dataset) / f"{recording_id}.flac"
+        repair_recording(Path(audio_root) / rel_path, dst)
+        build_one(dst, out)
+        return "repaired"

@@ -17,11 +17,33 @@ thresholds, filter) with a known precision and recall for every species.
 
 ![The BEX home page](docs/tour/home.png)
 
-What is loaded (recordings, model runs, saved threshold sets) and where to go
-next. The bar across the top follows the workflow, numbered left to right:
-**1 · Explorer** to look and listen, **2 · Analysis** to compare the models, and
-**3 · Survey protocol** to decide how to turn detections into species lists. *Set
-up* and *About* sit to the right.
+Every dataset, with a strip showing how far through the flow it is, and the
+button to continue. New datasets are added here (a folder of recordings), and
+their spectrograms and model runs started. The bar across the top follows the
+flow, numbered left to right: **1 · Label** to make ground truth, **2 ·
+Explorer** to look and listen, **3 · Analysis** to compare the models, and **4 ·
+Survey protocol** to decide how to turn detections into species lists. *Set up*
+and *About* sit to the right.
+
+*(v1.2: the screenshots on this page predate the new Home and Label pages.)*
+
+---
+
+## Label
+
+Label a random sample of your own recordings, a minute at a time. *Plan and
+sample* asks what you want to find out and draws a stratified random sample of
+60 s chunks (spread over sites, times of day and recordings); *Label* serves
+them in order. Drag a box around each call on the spectrogram and name the
+species, listen with the player beneath, and **close** the chunk when every bird
+in it is labelled — only closed chunks count as ground truth. The navigator
+above shows a grey, species-free guide to where the models hear something
+bird-like, and nothing from the models appears on the spectrogram. *Progress*
+tracks minutes closed, coverage by site and time of day, and the species
+accumulation curve; *Plan and sample → How much more?* measures how much your
+recordings vary and projects how much more labelling your target needs.
+*Publish and share* freezes versions, exports in SNE's columns and imports
+CSV, Raven and Audacity files.
 
 ---
 

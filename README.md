@@ -17,13 +17,28 @@ screenshots.
 
 ## What's in the app
 
+Every dataset follows one flow from the **Home** page: add it, run the models,
+**1 · Label** a sample, **2 · Explore**, **3 · Analyse**, choose a **4 · Survey
+protocol**, and apply it to the rest. Or skip labelling and just explore what
+the models report.
+
+- **Home** — every dataset with a progress strip through the flow; add a folder
+  of recordings, build its spectrograms and start the model runs from here.
+- **Label** — label your own recordings: BEX draws a random, stratified sample
+  of 60 s chunks and tells you roughly how much labelling your question needs;
+  you draw boxes on the spectrogram and close each chunk when every bird in it
+  is labelled. The models only show a coarse, species-free activity guide, so
+  the labels do not flatter them. Label sets are versioned, exported in SNE's
+  CSV columns, and can be imported from CSV, Raven or Audacity.
 - **Explorer** — one recording at a time: a navigator over the whole recording
   (where each model was right, wrong, or silent), the spectrogram with the
   annotators' boxes, a score lane per model, an audio player on the same time axis,
   and a window inspector.
 - **Compare models** — what each model would give you at your threshold rule: how
   often it is right when it reports a bird, how many songs it finds, false
-  detections per hour, precision–recall, and species by species.
+  detections per hour, precision–recall, and species by species — each with a
+  95% interval from resampling recordings, and a paired test of whether one
+  model is really better than another on your recordings.
 - **Species scorecard** — one bird at a time: what each model found and missed,
   on which recordings, and what it confuses the bird with.
 - **Geofilter forensics** — what a location filter hides, what that costs each
@@ -32,8 +47,14 @@ screenshots.
   (e.g. "95% precision"), overridable by hand, and saved as named sets you can
   apply to recordings that have no annotations.
 
-The sidebar holds the experiment's settings (dataset, models, plausibility
-profile, threshold rule) and keeps them as you move between pages.
+- **Survey protocol** — the rule that turns detections into species lists,
+  tuned and tested on held-out recordings, saved as a **setup** and applied to
+  every recording (`bex survey` does the same from the command line).
+
+The sidebar holds the experiment's settings (dataset, ground truth, models,
+plausibility profile, threshold rule) and keeps them as you move between pages.
+Its status panel says what every number rests on: how much is labelled, in how
+many recordings and sites.
 
 - **NB** - This app can ingest the Sierra Nevada soundscape (open-source, labelled, 33x1hr recordings with expert birdsong labels) as a demonstration set. See below ('Scoring needs annotations') for instructions.
 
@@ -93,13 +114,12 @@ bex app
 
 ### Scoring needs annotations
 
-Everything above works on unlabelled audio: you can explore every model's
-detections, and apply a saved threshold set. **However, comparing models against ground
-truth needs annotations**, and in this version the only importer is for the
-annotated Sierra Nevada soundscape set that BEX was built on (`bex ingest-sne`;
-point `audio_dir` and `labels_dir` in `bex.toml` at your copy). A general importer
-for your own annotations, and a labelling mode in the Explorer, are next on the
-roadmap.
+Everything works on unlabelled audio: you can explore every model's detections
+and apply a saved threshold set or survey setup. **Comparing models against
+ground truth needs labels**: make them on the **1 · Label** page, import them
+there (SNE-style CSV, Raven selection tables, Audacity label tracks), or use the
+annotated Sierra Nevada soundscape set BEX was built on (`bex ingest-sne`; point
+`audio_dir` and `labels_dir` in `bex.toml` at your copy).
 
 ## Results so far
 
@@ -129,15 +149,12 @@ distorting the comparison and how they were resolved.
 
 ## Roadmap
 
-- **Label your own data in the Explorer** — minute-by-minute labelling with the
-  models' suggestions as a guide, signed-off chunks, and versioned label sets
-  (PLAN.md, Stage 6.5).
-- An importer for your own annotations.
+- Bouts and per-species rules on the Survey protocol page (V1.1.md, "Later").
 - More models: region-tuned classifiers, BirdNET custom classifiers, new Perch
   releases.
 
 [PLAN.md](PLAN.md) is the design document (architecture, metric definitions,
-staged roadmap); [V1.md](V1.md) records how version 1 of the app was designed.
+staged roadmap); [V1.md](V1.md), [V1.1.md](V1.1.md) and [V1.2.md](V1.2.md) record how each version of the app was designed.
 
 ## Licences
 

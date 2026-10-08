@@ -54,7 +54,7 @@ from typing import Callable
 import numpy as np
 import polars as pl
 
-from . import ingest, store
+from . import ingest, labels, store
 from .schemas import RunManifest
 from .views import readout_token
 from .windows import GridParams, label_starts, window_starts
@@ -282,6 +282,7 @@ def align_run(
     species: list[str] | None = None,
     recordings: list[str] | None = None,
     progress: Callable[[str, int, int], None] | None = None,
+    truth_ref: str = labels.IMPORTED,
 ) -> tuple[pl.DataFrame, dict]:
     """Align every scored recording of a run. Returns the frame and its provenance.
 
@@ -290,15 +291,24 @@ def align_run(
     precisely the low-scoring ones that populate the high-recall end of the curve;
     building a PR curve from it would truncate the curve and inflate AP. D3 stored
     the full matrices for exactly this kind of retroactive metric.
+
+    `truth_ref` names the label set (`bex.labels`). Only time inside its
+    closed chunks is scored: a window nobody has listened to is neither a hit
+    nor a false alarm, so it is left out rather than counted as a negative.
+    For an exhaustive set (SNE's imported annotations) that keeps everything.
     """
     store_dir = Path(store_dir)
     manifest = RunManifest.load(store_dir, run_id)
-    recs, ann = ingest.read_dataset(store_dir, dataset)
-    if ann is None:
-        raise ValueError(f"dataset {dataset!r} has no annotations — nothing to score against")
+    recs, _ = ingest.read_dataset(store_dir, dataset)
+    t = labels.load_truth(store_dir, dataset, truth_ref)
+    if t is None or not t.recordings:
+        raise ValueError(f"dataset {dataset!r} has no annotations in "
+                         f"{labels.describe_ref(truth_ref)} (no closed chunks) — "
+                         "nothing to score against")
+    ann = t.annotations
 
     scored = store.list_scores(store_dir, run_id)
-    wanted = set(recs["recording_id"]) & set(scored)
+    wanted = set(t.recordings) & set(scored)
     if recordings is not None:
         wanted &= set(recordings)
     ids = sorted(wanted)
@@ -315,15 +325,21 @@ def align_run(
         sm = store.read_scores(store_dir, run_id, rid)
         if missing_vocab is None:
             missing_vocab = sorted(set(species) - set(sm.species_keys))
-        frames.append(align_recording(
+        frame = align_recording(
             sm,
             ann.filter(pl.col("recording_id") == rid),
             species,
             grid=grid,
             duration_s=durations.get(rid),
-        ))
+        )
+        if rid not in t.complete:
+            frame = labels.within_or_last(
+                frame, t.coverage.filter(pl.col("recording_id") == rid), durations)
+        frames.append(frame)
 
     aligned = pl.concat(frames)
+    if aligned.is_empty():
+        raise ValueError(f"no {run_id} window lies wholly inside a closed chunk")
     meta = {
         "run_id": run_id,
         "dataset": dataset,
@@ -340,6 +356,8 @@ def align_run(
         "n_windows": int(aligned.select(pl.struct("recording_id", "start_s").n_unique()).item()),
         "n_pairs": len(aligned),
         "n_positive": int(aligned["y_true"].sum()),
+        "truth_ref": truth_ref,
+        "labelled_hours": sum(t.covered_s.get(r, 0.0) for r in ids) / 3600,
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     return aligned, meta
@@ -350,13 +368,29 @@ def align_run(
 # --------------------------------------------------------------------------- #
 
 def aligned_path(store_dir: str | Path, dataset: str, run_id: str,
-                 grid_name: str = "native") -> Path:
-    return Path(store_dir) / "truth" / dataset / f"{run_id}__{grid_name}.parquet"
+                 grid_name: str = "native", truth_ref: str = labels.IMPORTED) -> Path:
+    """The imported annotations keep the original layout (caches built before
+    label sets existed stay valid); every other ref gets its own folder."""
+    d = Path(store_dir) / "truth" / dataset
+    if truth_ref != labels.IMPORTED:
+        d = d / "sets" / truth_ref
+    return d / f"{run_id}__{grid_name}.parquet"
+
+
+def prune_working(store_dir: str | Path, dataset: str, name: str, keep: str) -> None:
+    """Drop caches of a set's earlier working copies — each edit makes a new
+    ref, and only the current one can be asked for again."""
+    import shutil
+    d = Path(store_dir) / "truth" / dataset / "sets"
+    for p in d.glob(f"{name}@w*") if d.exists() else []:
+        if p.name != keep:
+            shutil.rmtree(p, ignore_errors=True)
 
 
 def write_aligned(store_dir: str | Path, dataset: str, run_id: str,
                   aligned: pl.DataFrame, meta: dict) -> Path:
-    out = aligned_path(store_dir, dataset, run_id, meta.get("grid", "native"))
+    out = aligned_path(store_dir, dataset, run_id, meta.get("grid", "native"),
+                       meta.get("truth_ref", labels.IMPORTED))
     out.parent.mkdir(parents=True, exist_ok=True)
     aligned.write_parquet(out)
     out.with_suffix(".json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
@@ -364,8 +398,9 @@ def write_aligned(store_dir: str | Path, dataset: str, run_id: str,
 
 
 def read_aligned(store_dir: str | Path, dataset: str, run_id: str,
-                 grid_name: str = "native") -> tuple[pl.DataFrame, dict]:
-    p = aligned_path(store_dir, dataset, run_id, grid_name)
+                 grid_name: str = "native",
+                 truth_ref: str = labels.IMPORTED) -> tuple[pl.DataFrame, dict]:
+    p = aligned_path(store_dir, dataset, run_id, grid_name, truth_ref)
     meta = json.loads(p.with_suffix(".json").read_text())
     return pl.read_parquet(p), meta
 

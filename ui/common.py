@@ -21,8 +21,8 @@ import streamlit as st
 from PIL import Image
 from streamlit_image_coordinates import streamlit_image_coordinates
 
-from bex import ingest, metrics, scorecard, stats, store, truth, views
-from bex import benchmark, geofilter, survey
+from bex import ingest, labels, metrics, scorecard, stats, store, truth, views
+from bex import benchmark, geofilter, setups, survey, uncertainty
 from bex import thresholds as th
 from bex.audio import load_clip
 from bex.player import encode_mp3, player_html
@@ -38,6 +38,38 @@ REPO_DIR = Path(__file__).resolve().parent.parent
 @st.cache_data(show_spinner=False)
 def get_dataset(name: str):
     return ingest.read_dataset(cfg.store_dir, name)
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def get_truth(dataset: str, truth_ref: str) -> labels.Truth | None:
+    """What the chosen label set says is really there (bex.labels.Truth), or
+    None when the dataset is being explored without ground truth. Keyed on the
+    ref, which changes with every edit to a working copy."""
+    return labels.load_truth(cfg.store_dir, dataset, truth_ref) if truth_ref else None
+
+
+def truth_annotations(dataset: str, truth_ref: str) -> pl.DataFrame | None:
+    t = get_truth(dataset, truth_ref)
+    return t.annotations if t is not None else None
+
+
+def labelled_only(df: pl.DataFrame, dataset: str, truth_ref: str,
+                  whole: bool = False) -> pl.DataFrame:
+    """Keep the rows truth can judge: inside closed chunks, or (whole=True) in
+    recordings closed end to end. A no-op for an exhaustive set such as SNE's."""
+    t = get_truth(dataset, truth_ref)
+    if t is None or t.exhaustive:
+        return df
+    if whole:
+        return df.filter(pl.col("recording_id").is_in(t.complete))
+    recs, _ = get_dataset(dataset)
+    return labels.within_or_last(df, t.coverage,
+                                 dict(zip(recs["recording_id"], recs["duration_s"])))
+
+
+def has_aligned(run_id: str, dataset: str, truth_ref: str, grid_name: str = "native") -> bool:
+    return bool(truth_ref) and truth.aligned_path(cfg.store_dir, dataset, run_id,
+                                                  grid_name, truth_ref).exists()
 
 
 @st.cache_data(show_spinner=False)
@@ -112,9 +144,9 @@ def complete_runs(dataset_name: str) -> list[str]:
 
 @st.cache_data(show_spinner=False)
 def get_comparison(run_ids: tuple[str, ...], profile_name: str, delta: float,
-                   dataset_name: str) -> dict:
+                   dataset_name: str, truth_ref: str = "") -> dict:
     """Matched-operating-point league across arms, judged by the profile."""
-    _, ann = get_dataset(dataset_name)
+    ann = truth_annotations(dataset_name, truth_ref)
     prof = load_profile(cfg.profiles_dir / profile_name)
     manifests = {m.run_id: m for m in views.list_runs(cfg.store_dir)}
     # Unique labels, not model-version: two readouts of one model share that name
@@ -123,7 +155,8 @@ def get_comparison(run_ids: tuple[str, ...], profile_name: str, delta: float,
     arms, thetas, names = {}, {}, {}
     for rid in run_ids:
         label = label_of[rid]
-        arms[label] = stats.mark_implausible(get_detections(rid), prof, mode="profile")
+        arms[label] = stats.mark_implausible(
+            labelled_only(get_detections(rid), dataset_name, truth_ref), prof, mode="profile")
         names[label] = get_names()
     table = stats.matched_league(arms, None, delta, ann)
     for label, row in zip(arms, table.iter_rows(named=True)):
@@ -138,21 +171,21 @@ def get_comparison(run_ids: tuple[str, ...], profile_name: str, delta: float,
 
 
 @st.cache_data(show_spinner=False)
-def get_aligned(run_id: str, dataset: str, grid_name: str):
+def get_aligned(run_id: str, dataset: str, grid_name: str, truth_ref: str = labels.IMPORTED):
     """The cached (window x species) truth/score frame — see `bex.truth`."""
-    return truth.read_aligned(cfg.store_dir, dataset, run_id, grid_name)
+    return truth.read_aligned(cfg.store_dir, dataset, run_id, grid_name, truth_ref)
 
 
 @st.cache_data(show_spinner=False)
 def get_scorecard(run_id: str, dataset: str, grid_name: str, precision_target: float,
-                  min_support: int, min_positives: int):
+                  min_support: int, min_positives: int, truth_ref: str = labels.IMPORTED):
     """One arm's full sweep: curves, per-species scorecard, league row.
 
     The curves are computed once and handed to both consumers — the per-species
     pass walks every stored row, and the table and the league row would otherwise
     each pay for it.
     """
-    aligned, meta = get_aligned(run_id, dataset, grid_name)
+    aligned, meta = get_aligned(run_id, dataset, grid_name, truth_ref)
     rules = (metrics.Rule("precision", precision_target, min_support),
              metrics.Rule("fbeta", 1.0, min_support),
              metrics.Rule("fbeta", 2.0, min_support))
@@ -165,14 +198,18 @@ def get_scorecard(run_id: str, dataset: str, grid_name: str, precision_target: f
             "resolution": truth.rank_resolution(aligned)}
 
 
-def build_alignment(run_id: str, dataset: str, grid_name: str) -> None:
+def build_alignment(run_id: str, dataset: str, grid_name: str,
+                    truth_ref: str = labels.IMPORTED) -> None:
     """Align one run against truth and cache it. Minutes of npz reads, once."""
     grid = None if grid_name == "native" else truth.SHARED_GRID
     bar = st.progress(0.0, text=f"{run_id}: reading score matrices…")
     def tick(rid: str, i: int, n: int) -> None:
         bar.progress(i / n, text=f"{run_id}: {rid} ({i + 1}/{n})")
     aligned, meta = truth.align_run(cfg.store_dir, dataset, run_id, grid=grid,
-                                    progress=tick)
+                                    progress=tick, truth_ref=truth_ref)
+    name, version = labels.parse_ref(truth_ref)
+    if name != labels.IMPORTED and version is None:
+        truth.prune_working(cfg.store_dir, dataset, name, keep=truth_ref)
     truth.write_aligned(cfg.store_dir, dataset, run_id, aligned, meta)
     bar.empty()
 
@@ -249,10 +286,11 @@ def rule_banner(spec: th.RuleSpec, note: str | None = None) -> str:
 # ---- Thresholds page -------------------------------------------------- #
 @st.cache_data(show_spinner=False)
 def get_curve_points(run_id: str, dataset_name: str, species_key: str,
-                     precision_floor: float, min_support: int) -> dict | None:
+                     precision_floor: float, min_support: int,
+                     truth_ref: str = labels.IMPORTED) -> dict | None:
     """One species' PR curve (thinned for drawing) and its candidate θ."""
     card = get_scorecard(run_id, dataset_name, "native", precision_floor,
-                         min_support, 1)
+                         min_support, 1, truth_ref)
     curve = card["curves"].get(species_key)
     if curve is None or not len(curve):
         return None
@@ -292,11 +330,12 @@ def names_of(keys: str, name_of, limit: int = 6) -> str:
 # ---- Compare and Species scorecard pages ------------------------------- #
 @st.cache_data(show_spinner=False, max_entries=8)
 def get_lab(run_id: str, dataset_name: str, mode: str, profile_name: str,
-            resolved_json: str) -> tuple[pl.DataFrame, pl.DataFrame, float]:
+            resolved_json: str, truth_ref: str = labels.IMPORTED
+            ) -> tuple[pl.DataFrame, pl.DataFrame, float]:
     """The aligned frame labelled at the thresholds in force (hit, hidden), every
-    annotated vocalisation's outcome, and the hours of audio scored."""
+    annotated vocalisation's outcome, and the hours of labelled audio scored."""
     resolved = resolved_from_key(resolved_json)
-    aligned, _ = get_aligned(run_id, dataset_name, "native")
+    aligned, _ = get_aligned(run_id, dataset_name, "native", truth_ref)
     by_table = resolved.as_dict()
     thetas = {sp: by_table.get(sp, resolved.default_theta)
               for sp in aligned["species_key"].unique().to_list()}
@@ -304,19 +343,21 @@ def get_lab(run_id: str, dataset_name: str, mode: str, profile_name: str,
               .filter(pl.col("implausible"))
               .select("recording_id", "start_s", "species_key"))
     lab = benchmark.label_windows(aligned, thetas, hidden)
-    recs, ann = get_dataset(dataset_name)
-    boxes = benchmark.vocalisation_outcomes(lab, ann)
+    t = get_truth(dataset_name, truth_ref)
+    boxes = benchmark.vocalisation_outcomes(lab, t.annotations)
     scored = aligned["recording_id"].unique().to_list()
-    hours = float(recs.filter(pl.col("recording_id").is_in(scored))["duration_s"].sum()) / 3600
+    hours = sum(t.covered_s.get(r, 0.0) for r in scored) / 3600
     return lab, boxes, hours
 
 
 @st.cache_data(show_spinner=False, max_entries=48)
 def get_species_detail(run_id: str, dataset_name: str, mode: str, profile_name: str,
-                       resolved_json: str, species_key: str, delta: float) -> dict:
+                       resolved_json: str, species_key: str, delta: float,
+                       truth_ref: str = labels.IMPORTED) -> dict:
     """One model on one species, at the thresholds in force: the scorecard's card,
     its recordings, what it is mistaken for, and its crowd."""
-    lab, boxes, hours = get_lab(run_id, dataset_name, mode, profile_name, resolved_json)
+    lab, boxes, hours = get_lab(run_id, dataset_name, mode, profile_name, resolved_json,
+                                truth_ref)
     lab_sp = lab.filter(pl.col("species_key") == species_key)
     boxes_sp = boxes.filter(pl.col("species_key") == species_key)
     judged = get_judged(run_id, mode, profile_name, resolved_json)
@@ -335,18 +376,24 @@ def get_species_detail(run_id: str, dataset_name: str, mode: str, profile_name: 
 @st.cache_data(show_spinner=False, max_entries=24)
 def get_benchmark(run_id: str, dataset_name: str, mode: str, profile_name: str,
                   resolved_json: str, precision_floor: float, min_support: int,
-                  min_positives: int) -> dict:
+                  min_positives: int, truth_ref: str = labels.IMPORTED) -> dict:
     """One model at the thresholds in force: the Compare dashboard's numbers.
 
     Keyed on the resolved thresholds and the judge, so the dashboard always
     describes exactly what the sidebar describes (bex.benchmark).
     """
-    lab, boxes, hours = get_lab(run_id, dataset_name, mode, profile_name, resolved_json)
+    lab, boxes, hours = get_lab(run_id, dataset_name, mode, profile_name, resolved_json,
+                                truth_ref)
     card = get_scorecard(run_id, dataset_name, "native", precision_floor,
-                         min_support, min_positives)
+                         min_support, min_positives, truth_ref)
     per_species = benchmark.per_species(lab, boxes).join(
         card["table"].select("species_key", "ap"), on="species_key", how="left")
+    t = get_truth(dataset_name, truth_ref)
+    per_rec = uncertainty.per_recording(
+        lab, boxes, {r: s / 3600 for r, s in t.covered_s.items()})
     return {
+        "per_recording": per_rec,
+        "intervals": uncertainty.bootstrap(per_rec),
         "summary": benchmark.summary(lab, boxes, hours),
         "per_species": per_species,
         "micro": metrics.curve_frame(metrics.thin(card["micro"], 400)).to_pandas(),
@@ -382,6 +429,16 @@ def outcome_bar(shares: dict[str, float], order: list[str]) -> alt.Chart:
     return (bar + text).properties(height=26)
 
 
+def ci(lo: float, hi: float, fmt: str = "{:.0%}") -> str:
+    """' (60–72%)' for a 95% interval, or '' when there is none to give."""
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        return ""
+    a, b = fmt.format(lo), fmt.format(hi)
+    if a.endswith("%") and b.endswith("%"):
+        a = a[:-1]
+    return f" ({a}–{b})"
+
+
 def outcome_key(order: list[str]) -> str:
     return " &nbsp; ".join(
         f"<span style='white-space:nowrap'><span style='color:"
@@ -391,10 +448,12 @@ def outcome_key(order: list[str]) -> str:
 # ---- Geofilter page --------------------------------------------------- #
 @st.cache_data(show_spinner=False, max_entries=24)
 def get_geo(run_id: str, dataset_name: str, mode: str, profile_name: str,
-            resolved_json: str) -> dict:
-    """What the filter does for one model at the thresholds in force (bex.geofilter)."""
-    judged = get_judged(run_id, mode, profile_name, resolved_json)
-    _, ann = get_dataset(dataset_name)
+            resolved_json: str, truth_ref: str = "") -> dict:
+    """What the filter does for one model at the thresholds in force (bex.geofilter).
+    With partial labels, only detections inside closed chunks are judged."""
+    judged = labelled_only(get_judged(run_id, mode, profile_name, resolved_json),
+                           dataset_name, truth_ref)
+    ann = truth_annotations(dataset_name, truth_ref)
     truthy = geofilter.with_truth(judged, ann)
     return {
         "reported": len(truthy),
@@ -406,20 +465,24 @@ def get_geo(run_id: str, dataset_name: str, mode: str, profile_name: str,
         "annotated_species": geofilter.annotated_species(ann),
         # Songs found needs the alignment against truth; without it, no recall.
         "songs": (benchmark.singing_outcomes(
-                      get_lab(run_id, dataset_name, mode, profile_name, resolved_json)[1])
-                  if ann is not None and truth.aligned_path(
-                      cfg.store_dir, dataset_name, run_id, "native").exists() else None),
+                      get_lab(run_id, dataset_name, mode, profile_name, resolved_json,
+                              truth_ref)[1])
+                  if ann is not None and has_aligned(run_id, dataset_name, truth_ref)
+                  else None),
     }
 
 
 @st.cache_data(show_spinner=False, max_entries=24)
 def get_species_lists(run_id: str, dataset_name: str, mode: str, profile_name: str,
-                      resolved_json: str, min_detections: int):
+                      resolved_json: str, min_detections: int, truth_ref: str = ""):
     """Each recording's species list for one model, at the thresholds in force,
-    against the annotations (bex.benchmark.species_lists)."""
-    _, ann = get_dataset(dataset_name)
-    lists = benchmark.species_lists(get_judged(run_id, mode, profile_name, resolved_json),
-                                    ann, min_detections)
+    against the annotations (bex.benchmark.species_lists). A list is only judged
+    on a recording labelled end to end."""
+    ann = truth_annotations(dataset_name, truth_ref)
+    judged = get_judged(run_id, mode, profile_name, resolved_json)
+    if ann is not None:
+        judged = labelled_only(judged, dataset_name, truth_ref, whole=True)
+    lists = benchmark.species_lists(judged, ann, min_detections)
     return lists, benchmark.species_list_summary(lists)
 
 
@@ -431,20 +494,22 @@ def get_survey_detections(run_id: str, mode: str, profile_name: str) -> pl.DataF
 
 
 @st.cache_resource(show_spinner=False, max_entries=8)
-def get_curve_source(run_id: str, dataset: str) -> survey.CurveSource:
+def get_curve_source(run_id: str, dataset: str,
+                     truth_ref: str = labels.IMPORTED) -> survey.CurveSource:
     """The aligned frame split by species once, for refitting θ on any subset."""
-    aligned, _ = get_aligned(run_id, dataset, "native")
+    aligned, _ = get_aligned(run_id, dataset, "native", truth_ref)
     return survey.CurveSource(aligned)
 
 
 @st.cache_data(show_spinner=False, max_entries=32)
 def get_survey_evidence(run_id: str, dataset: str, mode: str, profile_name: str,
                         spec: th.RuleSpec, identity: str, fit_on: tuple[str, ...] | None,
-                        spans: tuple[float, ...], sidebar_json: str) -> pl.DataFrame:
+                        spans: tuple[float, ...], sidebar_json: str,
+                        truth_ref: str = "") -> pl.DataFrame:
     """Evidence at every precision floor (θ fitted on `fit_on`; every recording
     when None) and at the sidebar's thresholds."""
-    bars = ({} if not truth.aligned_path(cfg.store_dir, dataset, run_id, "native").exists()
-            else survey.fit_bars(get_curve_source(run_id, dataset), identity, spec,
-                                 list(fit_on) if fit_on is not None else None))
+    bars = ({} if not has_aligned(run_id, dataset, truth_ref)
+            else survey.fit_bars(get_curve_source(run_id, dataset, truth_ref), identity,
+                                 spec, list(fit_on) if fit_on is not None else None))
     bars[survey.SIDEBAR] = resolved_from_key(sidebar_json)
     return survey.evidence(get_survey_detections(run_id, mode, profile_name), bars, spans)

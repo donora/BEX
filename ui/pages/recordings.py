@@ -50,21 +50,16 @@ audio library cannot read (`--full` for all of them).
 
 **Then run a model over the new dataset** — see the **Models** page.
 
-**Annotations.** A scanned folder is unlabelled: BEX can show what each model
-detects, but cannot score them. Labelled data currently comes in through a
-dataset-specific importer — `bex ingest-sne` for the Sierra Nevada set this
-app was built on. There is not yet a general importer for your own
-annotations.
+**Or add it from the app**: *Home → Add a dataset* scans a folder, builds the
+spectrograms and starts the model runs.
+
+**Labels.** A scanned folder is unlabelled: BEX can show what each model
+detects, but cannot score them until there is ground truth. Make it on the
+**1 · Label** page (a random sample of minutes, labelled by ear), or import
+existing annotations there — SNE-style CSV, Raven selection tables or Audacity
+label tracks.
         """
     )
-    st.info(
-        "**Coming soon: label your own recordings.** A labelling mode in the "
-        "Explorer: step through a recording a minute at a time, listen, read the "
-        "spectrogram and the models' suggestions, draw boxes and name the species. "
-        "Each minute is signed off when every bird in it is labelled. Labels are "
-        "saved as named, versioned label sets with a full edit history — nothing is "
-        "ever overwritten — so any recording you label can be used to score the "
-        "models on your own site.", icon="🏷️")
 
 
 render(sidebar.render())

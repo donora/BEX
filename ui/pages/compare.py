@@ -5,6 +5,7 @@ from ui import sidebar
 
 def render(ctx) -> None:
     dataset = ctx.dataset
+    truth_ref = ctx.truth_ref
     recordings = ctx.recordings
     annotations = ctx.annotations
     picked = ctx.picked
@@ -50,13 +51,13 @@ def render(ctx) -> None:
                 "has not reached. See the Models page.")
         return
     unaligned = [r for r in ready
-                 if not truth.aligned_path(cfg.store_dir, dataset, r, "native").exists()]
+                 if not has_aligned(r, dataset, truth_ref)]
     if unaligned:
         st.info(f"{len(unaligned)} run(s) need aligning against the annotations first. "
                 "This reads every stored score matrix, takes a minute, and is cached.")
         if st.button(f"Align {len(unaligned)} run(s)", key="pr_build", type="primary"):
             for rid in unaligned:
-                build_alignment(rid, dataset, "native")
+                build_alignment(rid, dataset, "native", truth_ref)
             st.rerun()
         return
 
@@ -69,7 +70,8 @@ def render(ctx) -> None:
     model_shape = alt.Scale(domain=order, range=[shape[m] for m in order])
     with st.spinner("measuring every model at the thresholds in force…"):
         B = {m: get_benchmark(rid, dataset, judge, profile_name,
-                              resolved_key(resolved[rid]), p_floor, min_support, min_pos)
+                              resolved_key(resolved[rid]), p_floor, min_support, min_pos,
+                              truth_ref)
              for m, rid in labels.items()}
     nm = lambda k: views.display_name(k, get_names())
 
@@ -113,15 +115,18 @@ def render(ctx) -> None:
                 st.caption("When it reports a bird")
                 st.altair_chart(outcome_bar({k: v / rep_total for k, v in s["report"].items()},
                                             list(benchmark.REPORT_OUTCOMES)), width="stretch")
-                st.markdown(f"≈ **{s['false_per_hour']:.0f}** false detections per hour "
-                            "of audio")
+                iv = B[m]["intervals"]
+                st.markdown(f"Precision **{s['precision']:.0%}**"
+                            f"{ci(*iv['precision'])} · ≈ **{s['false_per_hour']:.0f}**"
+                            f"{ci(*iv['false_per_hour'], '{:.0f}')} false detections per "
+                            "hour of audio")
                 sing_total = sum(s["singing"].values()) or 1
                 st.caption("When a bird is singing")
                 st.altair_chart(outcome_bar(
                     {("correct" if k == "found" else k): v / sing_total
                      for k, v in s["singing"].items()},
                     ["correct", "filter hid a real bird", "missed"]), width="stretch")
-                st.markdown(f"Finds **{s['found']:.0%}** of songs")
+                st.markdown(f"Finds **{s['found']:.0%}**{ci(*iv['found'])} of songs")
 
                 ranked = ps.filter((pl.col("n_positive") >= min_labelled)
                                    & pl.col("found").is_not_null())
@@ -149,6 +154,14 @@ def render(ctx) -> None:
                     st.markdown(f"<div style='font-size:0.85rem'>worst <b>{lo:.0%}</b> — "
                                 f"{who(lo)}<br>best <b>{hi:.0%}</b> — {who(hi)}</div>",
                                 unsafe_allow_html=True)
+
+    st.caption(
+        "Figures in brackets are 95% intervals from resampling the "
+        f"{len(B[order[0]]['per_recording'])} labelled recordings — how far each "
+        "number could move on another set of recordings like these. None is shown "
+        f"below {uncertainty.MIN_UNITS} recordings.")
+    if len(order) >= 2:
+        paired_differences(B, order)
 
     # ---- 2 · precision–recall, with where your settings put each model -------- #
     heading(
@@ -230,7 +243,7 @@ def render(ctx) -> None:
              "drops one-off detections — usually wrong species — at the cost of rare, "
              "quiet birds.")
     L = {m: get_species_lists(rid, dataset, judge, profile_name,
-                              resolved_key(resolved[rid]), int(k_min))
+                              resolved_key(resolved[rid]), int(k_min), truth_ref)
          for m, rid in labels.items()}
     # One chart, every model side by side: the average recording's species, and
     # what each model's list would make of them. Up to the annotated line, the
@@ -509,16 +522,16 @@ def render(ctx) -> None:
                  "share a denominator.")
         grid_name = "native" if grid_label == "native" else "shared-1s"
         todo = [r for r in ready
-                if not truth.aligned_path(cfg.store_dir, dataset, r, grid_name).exists()]
+                if not has_aligned(r, dataset, truth_ref, grid_name)]
         if todo:
             if st.button(f"Align {len(todo)} run(s) on the {grid_name} grid",
                          key="pr_build_grid"):
                 for rid in todo:
-                    build_alignment(rid, dataset, grid_name)
+                    build_alignment(rid, dataset, grid_name, truth_ref)
                 st.rerun()
         else:
             cards = {m: get_scorecard(rid, dataset, grid_name, p_floor, min_support,
-                                      min_pos) for m, rid in labels.items()}
+                                      min_pos, truth_ref) for m, rid in labels.items()}
             league = pl.DataFrame([{**c["row"], "model": m} for m, c in cards.items()])
             st.dataframe(league.select("model", *[c for c in ("cmap", "micro_ap",
                                                               "n_species", "n_excluded")
@@ -547,6 +560,41 @@ def render(ctx) -> None:
                     "saturated sigmoid scores were stored as float16, whose steps near "
                     "1.0 are coarser than the differences between them. AP measures "
                     "the storage format here, not the model; a float32 re-run fixes it.")
+
+
+
+
+def paired_differences(B: dict, order: list[str]) -> None:
+    """E2: is one model better than another on these recordings? Each pair is
+    resampled together, so what the recordings share cancels out."""
+    heading(
+        "Is one model better here?",
+        "For each pair of models, the difference in each headline number, with a "
+        "95% interval from resampling recordings **together** — both models on the "
+        "same resampled recordings. That is a much sharper test than checking "
+        "whether the two models' own intervals overlap, because a hard recording "
+        "is hard for both.\n\n"
+        "**Higher / lower** means the interval for the difference leaves out zero: "
+        "on recordings like these, the gap is real. **No clear difference** means "
+        "it could go either way; more labelled recordings would narrow it.")
+    rows = []
+    for i, a in enumerate(order):
+        for b in order[i + 1:]:
+            d = uncertainty.paired(B[a]["per_recording"], B[b]["per_recording"])
+            for stat, (diff, lo, hi) in d.items():
+                pct = stat != "false_per_hour"
+                f = "{:+.1%}" if pct else "{:+.1f}"
+                v = uncertainty.verdict(diff, lo, hi)
+                if v in ("higher", "lower"):
+                    better = (v == "higher") != (stat == "false_per_hour")
+                    v = f"{a if better else b} better"
+                rows.append({"models": f"{a} − {b}",
+                             "measure": uncertainty.STAT_NAMES[stat],
+                             "difference": f.format(diff) if np.isfinite(diff) else "—",
+                             "95% interval": (f"{f.format(lo)} to {f.format(hi)}"
+                                              if np.isfinite(lo) else "—"),
+                             "verdict": v})
+    st.dataframe(pl.DataFrame(rows), hide_index=True, width="stretch")
 
 
 render(sidebar.render())

@@ -13,6 +13,7 @@ TRACK_COLOUR = "#dcdad3"
 
 def render(ctx) -> None:
     dataset = ctx.dataset
+    truth_ref = ctx.truth_ref
     recordings = ctx.recordings
     annotations = ctx.annotations
     run_label = ctx.run_label
@@ -64,7 +65,7 @@ def render(ctx) -> None:
 
     with st.spinner("judging every model's detections…"):
         G = {m.run_id: get_geo(m.run_id, dataset, judge, profile_name,
-                               resolved_key(resolved[m.run_id]))
+                               resolved_key(resolved[m.run_id]), truth_ref)
              for m in models}
     judged_models = [m for m in models if m.run_id not in no_filter]
 
@@ -224,7 +225,7 @@ def render(ctx) -> None:
                 width="stretch", hide_index=True, height=240,
                 column_config={"real": "annotated after all",
                                "peak": st.column_config.NumberColumn(format="%.3f")})
-        matched_league(dataset, picked, profile_name, delta)
+        matched_league(dataset, picked, profile_name, delta, truth_ref)
 
 
 def swim_lanes(df: pd.DataFrame, rows: list[str], models, label: dict, colour: dict,
@@ -381,7 +382,8 @@ def explorer_jump(species: list[str], fname, runs: list[tuple[str, str]], judge:
             go_to_explorer(best["recording_id"], float(best["start_s"]), sp)
 
 
-def matched_league(dataset: str, picked: list[str], profile_name: str, delta: float) -> None:
+def matched_league(dataset: str, picked: list[str], profile_name: str, delta: float,
+                   truth_ref: str = "") -> None:
     """Every model at the same number of detections — the §4 statistics at a
     matched operating point, not the sidebar's thresholds (moved here in V1 C1)."""
     ready = [r for r in complete_runs(dataset) if r in picked]
@@ -399,7 +401,7 @@ def matched_league(dataset: str, picked: list[str], profile_name: str, delta: fl
         "`scripts/crosscheck.py` re-derives them from the raw score matrices.",
         level="#####")
     with st.spinner("computing the matched league…"):
-        C = get_comparison(tuple(ready), profile_name, delta, dataset)
+        C = get_comparison(tuple(ready), profile_name, delta, dataset, truth_ref)
     show = [c for c in ["arm", "theta", "detections", "detection_windows",
                         "muddy_window_rate", "median_impostor_mass",
                         "false_suppressions", "false_admissions"]

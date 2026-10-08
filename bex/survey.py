@@ -439,7 +439,51 @@ def assess(ev: pl.DataFrame, rule: SurveyRule, ann: pl.DataFrame,
     per_rec = per_recording(out, recordings)
     return {"rule": rule, "outcomes": out, "per_recording": per_rec,
             "score": score(per_rec, hours_of, unjudged_wrong),
-            "intervals": bootstrap(per_rec, hours_of, n_boot, seed, unjudged_wrong)}
+            "intervals": bootstrap(per_rec, hours_of, n_boot, seed, unjudged_wrong),
+            "hours_of": hours_of, "unjudged_wrong": unjudged_wrong}
+
+
+def paired(a: dict, b: dict, n: int = 1000, seed: int = 0,
+           level: float = 0.95) -> dict[str, tuple[float, float, float]]:
+    """a − b for each headline number of two `assess` results, with an interval
+    from resampling the recordings both were scored on **together** (V1.2 E2).
+
+    A hard recording is hard for every model, so two models' own intervals
+    overlap far more than their difference is uncertain; this asks the
+    question a comparison actually needs answered.
+    """
+    pa, pb = a["per_recording"], b["per_recording"]
+    common = sorted(set(pa["recording_id"]) & set(pb["recording_id"]))
+    pa = pa.filter(pl.col("recording_id").is_in(common)).sort("recording_id")
+    pb = pb.filter(pl.col("recording_id").is_in(common)).sort("recording_id")
+    hours_of, uw = a["hours_of"], a["unjudged_wrong"]
+    hrs = np.array([hours_of.get(x, 0.0) for x in common])
+    ma = pa.select(OUTCOMES).to_numpy().astype(np.float64)
+    mb = pb.select(OUTCOMES).to_numpy().astype(np.float64)
+    r = len(common)
+
+    def stats(mat, idx=None):
+        if idx is None:
+            sums, h = mat.sum(axis=0), hrs.sum()
+            return _stats({o: sums[i] for i, o in enumerate(OUTCOMES)}, r, h, uw)
+        sums = mat[idx].sum(axis=1)
+        return _stats({o: sums[:, i] for i, o in enumerate(OUTCOMES)}, r,
+                      hrs[idx].sum(axis=1), uw)
+
+    sa, sb = stats(ma), stats(mb)
+    diff = {k: float(sa[k] - sb[k]) for k in STATS}
+    if r < 2:
+        return {k: (diff[k], float("nan"), float("nan")) for k in STATS}
+    idx = np.random.default_rng(seed).integers(0, r, size=(n, r))
+    ra, rb = stats(ma, idx), stats(mb, idx)
+    lo, hi = (1 - level) / 2 * 100, (1 + level) / 2 * 100
+    out = {}
+    for k in STATS:
+        d = np.asarray(ra[k] - rb[k], dtype=np.float64)
+        d = d[np.isfinite(d)]
+        out[k] = ((diff[k], float(np.percentile(d, lo)), float(np.percentile(d, hi)))
+                  if len(d) else (diff[k], float("nan"), float("nan")))
+    return out
 
 
 # --------------------------------------------------------------------------- #

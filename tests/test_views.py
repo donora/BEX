@@ -351,3 +351,43 @@ def test_a_model_keeps_its_colour_when_a_newer_run_arrives():
     after = model_styles(old + [M(run_id="mine", created_utc="2026-03-01")])
     assert all(after[r]["colour"] == before[r]["colour"] for r in before)
     assert len({s["colour"] for s in after.values()}) == 3
+
+
+def test_activity_guide_hides_species_and_skips_sound_classes():
+    from bex.views import activity_bins, activity_windows
+    det = pl.DataFrame({
+        "recording_id": ["r"] * 6, "start_s": [0.0, 0.0, 5.0, 10.0, 15.0, 15.0],
+        "end_s": [5.0, 5.0, 10.0, 15.0, 20.0, 20.0],
+        "species_key": ["Turdus merula", "Engine", "Turdus merula", "Erithacus rubecula",
+                        "Turdus merula", "Engine"],
+        "score_raw": [0.9, 0.99, 0.2, 0.5, 0.05, 0.99]})
+    w, bar = activity_windows(det, share=0.5)
+    assert list(w.columns) == ["recording_id", "start_s", "end_s"]   # no species
+    assert w["start_s"].to_list() == [0.0, 10.0] and bar == 0.5
+    bins = activity_bins(w, "r", 20.0, 4)
+    assert bins["activity"].to_list() == [1.0, 0.0, 1.0, 0.0]
+
+
+def test_mel_rows_and_hz_round_trip():
+    from bex.views import hz_to_mel_row, mel_row_to_hz
+    meta = {"n_mels": 128, "fmin": 0, "fmax": 16000, "sr": 32000}
+    assert abs(mel_row_to_hz(hz_to_mel_row(3000, meta), meta) - 3000) < 1
+
+
+def test_box_suggestions_rank_within_each_model_and_combine_by_rank():
+    import numpy as np
+    from bex.store import ScoreMatrix
+    from bex.views import box_suggestions
+    keys = ["Turdus merula", "Erithacus rubecula", "Engine", "Parus major"]
+    a = ScoreMatrix("r", "a", np.array([[0.9, 0.5, 0.99, 0.1],      # 0–3 s
+                                        [0.1, 0.1, 0.10, 0.8]],     # 3–6 s: outside
+                                       np.float16), np.array([0, 3], np.float32), 3.0, keys)
+    b = ScoreMatrix("r", "b", np.array([[0.02, 0.03, 0.5, 0.001]], np.float16),
+                    np.array([0], np.float32), 5.0, keys)
+    out = box_suggestions({"A": a, "B": b}, 0.5, 2.5)
+    assert "Engine" not in out["species_key"].to_list()            # not a species
+    # A ranks blackbird 1st, robin 2nd; B robin 1st, blackbird 2nd: a tie on
+    # combined support, both ahead of Parus major (a window outside the box).
+    assert set(out["species_key"].head(2)) == {"Turdus merula", "Erithacus rubecula"}
+    assert out["species_key"][2] == "Parus major"
+    assert out.filter(pl.col("species_key") == "Parus major")["A score"][0] < 0.2

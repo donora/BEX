@@ -5,6 +5,7 @@ from ui import sidebar
 
 def render(ctx) -> None:
     dataset = ctx.dataset
+    truth_ref = ctx.truth_ref
     recordings = ctx.recordings
     annotations = ctx.annotations
     picked = ctx.picked
@@ -36,7 +37,7 @@ def render(ctx) -> None:
     sc_ready = [r for r in complete_runs(dataset) if r in picked]
     sc_grid = "native"
     sc_unaligned = [r for r in sc_ready
-                    if not truth.aligned_path(cfg.store_dir, dataset, r, sc_grid).exists()]
+                    if not has_aligned(r, dataset, truth_ref, sc_grid)]
     if annotations is None:
         st.info(f"Dataset **{dataset}** is unlabelled — there is no truth to score against.")
     elif not sc_ready:
@@ -56,13 +57,13 @@ def render(ctx) -> None:
         sc_colours = {m: model_style[sc_arms[m]]["colour"] for m in sc_order}
         sc_fname = lambda k: views.display_name(k, get_names())
 
-        first_aligned, _ = get_aligned(sc_arms[sc_order[0]], dataset, sc_grid)
+        first_aligned, _ = get_aligned(sc_arms[sc_order[0]], dataset, sc_grid, truth_ref)
         index = scorecard.species_index(first_aligned, annotations)
 
         # Every arm at its own per-species θ from the sidebar rule — the same
         # thresholds the Explorer draws with, overrides and fallbacks included.
         rule_name = spec.label
-        frames = {label: get_aligned(sc_arms[label], dataset, sc_grid)[0]
+        frames = {label: get_aligned(sc_arms[label], dataset, sc_grid, truth_ref)[0]
                   for label in sc_order}
         all_species = index["species_key"].to_list()
         theta_map = {label: {sp: resolved[sc_arms[label]].theta_of(sp)
@@ -196,7 +197,8 @@ def render(ctx) -> None:
 
         details = {
             label: get_species_detail(sc_arms[label], dataset, judge, profile_name,
-                                      resolved_key(resolved[sc_arms[label]]), pick_sp, delta)
+                                      resolved_key(resolved[sc_arms[label]]), pick_sp, delta,
+                                      truth_ref)
             for label in sc_order}
         info = index.filter(pl.col("species_key") == pick_sp).row(0, named=True)
         st.markdown(

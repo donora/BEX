@@ -261,3 +261,23 @@ def test_best_follows_the_objective_and_its_limits():
     assert pick(objective="firm_precision") == (0.9, 3)
     with pytest.raises(ValueError):
         Constraints(objective="vibes")
+
+
+def test_paired_difference_on_the_same_recordings():
+    """Model a always has one more firm-right call than b on every recording:
+    the paired interval for the difference sits above zero."""
+    import numpy as np
+    from bex import survey as S
+    rng = np.random.default_rng(3)
+    rows_a, rows_b = [], []
+    for i in range(10):
+        base = {o: 0 for o in S.OUTCOMES}
+        base["firm, right"], base["missed"] = int(rng.integers(2, 9)), 3
+        rows_a.append({"recording_id": f"r{i}", **base,
+                       "firm, right": base["firm, right"] + 1, "missed": 2})
+        rows_b.append({"recording_id": f"r{i}", **base})
+    hours = {f"r{i}": 1.0 for i in range(10)}
+    a = {"per_recording": pl.DataFrame(rows_a), "hours_of": hours, "unjudged_wrong": False}
+    b = {"per_recording": pl.DataFrame(rows_b), "hours_of": hours, "unjudged_wrong": False}
+    d, lo, hi = S.paired(a, b)["firm_recall"]
+    assert d > 0 and lo > 0 and hi >= d

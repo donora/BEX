@@ -22,8 +22,8 @@ def render() -> None:
         "**This platform helps you make those choices.** Upload your own recordings, "
         "run them through several models side by side, score every model against "
         "the ground truth, and create a processing pipeline with a quantified precision and "
-        "recall, species by species. \nUse the **Explorer** page to view and listen to your recordings, "
-        "and see the ground truth and model predictions."
+        "recall, species by species — with error bars that say how much labelled "
+        "data each number rests on."
     )
     st.image(str(REPO_DIR / "assets" / "mission_flow.svg"), width="stretch")
 
@@ -31,25 +31,33 @@ def render() -> None:
         """
 #### How the app follows that flow
 
-1. **Bring your data** — ingest a dataset (*Recordings*), and annotate a sample
-   of it so there is ground truth to measure against.
-2. **Run models** — off-the-shelf models (BirdNET and Perch today) run on the
-   same audio, each on its own window grid, with nothing filtered away
-   (*Models*). Your own models join the same way: a runner that writes BEX's
-   score format (see `envs/`). Region-trained models are next on the roadmap.
-3. **Score each** — precision and recall for every species against the
-   annotations, at a threshold chosen per species by a rule you set and can
-   override (*Thresholds*); window by window in the *Explorer*.
-4. **Compare** — the same audio, the same truth and the same metrics for every
-   model, so a difference between them is a difference in the models (*Compare
-   models*, *Species scorecard*).
-5. **Decide** — choose the rule that turns each model's detections into a
-   species list for every recording: species it reports firmly, and species an
-   expert should check first. Tune it to your goal and limits, then test it on
-   recordings it was not tuned on (*Survey protocol*).
-6. **Apply** — save the thresholds you settle on as a named set, and use them to
-   process recordings that have no annotations, with the error rates you
-   measured.
+Every dataset goes through the same steps, from the **Home** page:
+
+1. **Bring your data and run the models** — add a folder of recordings, build
+   its spectrograms, and run off-the-shelf models (BirdNET and Perch today) over
+   it, each on its own window grid, with nothing filtered away (*Models*). Your
+   own models join the same way: a runner that writes BEX's score format (see
+   `envs/`).
+2. **Label a sample** (*1 · Label*) — BEX picks a random, stratified sample of
+   60-second chunks and you label them, a minute at a time, by ear and from the
+   spectrogram. The models only show a coarse, species-free guide to where the
+   recording is busy, so the labels do not flatter them. Each chunk is closed
+   when every bird in it is labelled; only closed chunks count as ground truth.
+   Or skip labelling and **just explore** what the models report, unscored —
+   you can start labelling at any time.
+3. **Explore** (*2 · Explorer*) — window by window, every model's detections
+   against your labels, with the audio.
+4. **Analyse** (*3 · Analysis*) — precision and recall for every species,
+   at a threshold chosen per species by a rule you set (*Thresholds*), with 95%
+   intervals from resampling recordings, and a paired test of whether one model
+   is really better than another on your recordings.
+5. **Decide** (*4 · Survey protocol*) — choose the rule that turns detections
+   into a species list for every recording: species reported firmly, and species
+   an expert should check first. Tune it, test it on recordings it was not tuned
+   on, and **save it as a setup**.
+6. **Apply** — run the setup over every recording. Labelled recordings keep
+   their labels; the rest get the model's lists, carrying the precision and
+   recall you measured, so a reader knows what they can trust them to mean.
         """
     )
 

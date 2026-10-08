@@ -56,6 +56,7 @@ def key_html(order: list[str]) -> str:
 
 def render(ctx) -> None:
     dataset = ctx.dataset
+    truth_ref = ctx.truth_ref
     recordings = ctx.recordings
     annotations = ctx.annotations
     picked = ctx.picked
@@ -104,21 +105,46 @@ def render(ctx) -> None:
     if annotations is None:
         unlabelled(ctx, labels, order, colour, nm)
         return
+    label_set = set(annotations["species_key"].unique().to_list())
+    # A species list is for a whole recording (P2), so only recordings labelled
+    # end to end can judge one; a closed recording with no birds counts too.
+    all_ids = sorted(set(ctx.truth_obj.complete) & set(recordings["recording_id"].to_list()))
+    if len(all_ids) < 2:
+        st.info(f"A survey protocol is judged recording by recording — did the list "
+                f"name the right species? — so it needs recordings labelled from start "
+                f"to finish, and *{ctx.truth_obj.label}* has {len(all_ids)}. Add a few "
+                "whole recordings to the labelling sample (6 or more allows a "
+                "tuning/test split), or switch to *All recordings, unscored* to see the "
+                "lists without scores.")
+        from bex import labels as label_sets   # `labels` here is the model dict
+        name, version = label_sets.parse_ref(ctx.truth_ref)
+        if name != label_sets.IMPORTED and version is None:
+            k = st.number_input("Whole recordings to add", 1, len(recordings), 2,
+                                key="sv_whole_n")
+            if st.button(f"Add {int(k)} whole recording{'s' * (k != 1)} to the "
+                         f"labelling sample of {name}", type="primary", key="sv_whole"):
+                ls = label_sets.load_set(cfg.store_dir, dataset, name)
+                ls.sample = label_sets.draw_sample(recordings, 0, seed=len(ls.sample),
+                                                   whole_recordings=int(k),
+                                                   existing=ls.sample)
+                label_sets.save_set(cfg.store_dir, ls)
+                get_truth.clear()
+                st.switch_page("ui/pages/label.py")
+        st.page_link("ui/pages/label.py", label="Go to 1 · Label", icon="🏷️")
+        apply_setup(ctx, lambda k: views.display_name(k, get_names()))
+        return
+
     unaligned = [r for r in ready
-                 if not truth.aligned_path(cfg.store_dir, dataset, r, "native").exists()]
+                 if not has_aligned(r, dataset, truth_ref)]
     if unaligned:
         st.info(f"{len(unaligned)} run(s) need aligning against the annotations first "
                 "— thresholds are fitted on the alignment. It takes a minute and is "
                 "cached.")
         if st.button(f"Align {len(unaligned)} run(s)", key="sv_align", type="primary"):
             for rid in unaligned:
-                build_alignment(rid, dataset, "native")
+                build_alignment(rid, dataset, "native", truth_ref)
             st.rerun()
         return
-
-    label_set = set(annotations["species_key"].unique().to_list())
-    all_ids = sorted(set(annotations["recording_id"].unique().to_list())
-                     & set(recordings["recording_id"].to_list()))
 
     # A rule loaded from a sweep cell or a report: applied before the widgets
     # exist, and it switches the rule to "by hand" so it stays put.
@@ -297,7 +323,7 @@ def render(ctx) -> None:
     with st.spinner("fitting thresholds on the tuning recordings…"):
         E = {m: get_survey_evidence(rid, dataset, judge, profile_name, spec,
                                     th.identity(manifest_of[rid]), tuple(tune), spans,
-                                    resolved_key(resolved[rid]))
+                                    resolved_key(resolved[rid]), truth_ref)
              for m, rid in labels.items()}
     hand_rule = survey.SurveyRule(check=survey.Condition(cf, ck, cw),
                                   firm=survey.Condition(ff, fk, fw))
@@ -577,7 +603,7 @@ def render(ctx) -> None:
         bar = st.progress(0.0, text="leaving out the first recording…")
         inputs = [survey.ModelInputs(m, th.identity(manifest_of[rid]),
                                      get_survey_detections(rid, judge, profile_name),
-                                     get_curve_source(rid, dataset))
+                                     get_curve_source(rid, dataset, truth_ref))
                   for m, rid in labels.items()]
         res = survey.full_assessment(
             inputs, hand_rule, spec, annotations, all_ids, hours_of, cons, label_set,
@@ -660,6 +686,126 @@ def render(ctx) -> None:
         swl = pl.concat([SW[m].with_columns(model=pl.lit(m)) for m in order])
         st.download_button("The sweep (CSV)", swl.write_csv(), "survey_sweep.csv",
                            "text/csv", key="sv_dl_sweep")
+
+    # ---- 8 · save the setup, apply it to the whole dataset (V1.2 F4) ------- #
+    save_setup(ctx, labels, order, rules, E, tune, test, explore_all, annotations,
+               hours_of, label_set, unjudged_wrong)
+    apply_setup(ctx, nm)
+
+
+def save_setup(ctx, arms, order, rules, E, tune, test, explore_all, annotations,
+               hours_of, label_set, unjudged_wrong) -> None:
+    """Freeze a model's rule, its thresholds and what it measured on the test
+    recordings, so it can be run over recordings nobody labelled."""
+    heading(
+        "Save this setup",
+        "A **setup** is one model read one way: the rule above, each species' "
+        "threshold at the score bars it uses (fitted on the tuning recordings), the "
+        "judge, and **what it measured on the test recordings**, with 95% intervals. "
+        "Saved, it can be applied to every recording in this dataset — or to another "
+        "dataset the same model has scored — and every list it produces carries "
+        "that measurement as its claim.",
+        level="###")
+    a, b = st.columns([1, 1.4])
+    m = a.selectbox("Model", order, key="sv_save_model")
+    rid = arms[m]
+    rule = rules[m]
+    on = list(test) if not explore_all else list(tune)
+    res = survey.assess(E[m], rule, annotations, on, hours_of, label_set, unjudged_wrong)
+    bars = survey.fit_bars(get_curve_source(rid, ctx.dataset, ctx.truth_ref),
+                           th.identity(ctx.manifest_of[rid]), ctx.spec, list(tune))
+    bars[survey.SIDEBAR] = ctx.resolved[rid]
+    s = setups.Setup(
+        name="", model=th.identity(ctx.manifest_of[rid]), model_label=m,
+        rule=rule.to_dict(),
+        bars=setups.bars_payload(bars, {rule.check.bar, rule.firm.bar}),
+        judge=ctx.judge, profile=ctx.profile_name,
+        fitted_on={"dataset": ctx.dataset, "truth_ref": ctx.truth_ref, "recordings": list(tune),
+                   "run_id": rid},
+        performance={"score": {k: float(v) for k, v in res["score"].items()
+                               if isinstance(v, (int, float))},
+                     "intervals": {k: list(v) for k, v in res["intervals"].items()},
+                     "recordings": len(on),
+                     "hours": float(sum(hours_of.get(r, 0) for r in on)),
+                     "on": "all (not held out)" if explore_all else "test"},
+        created_by=st.session_state.get("labeller", ""))
+    st.markdown(f"> {s.claim()}")
+    if explore_all:
+        st.warning("The split is off, so this was measured on the recordings it was "
+                   "tuned on, which flatters it. Turn the split on before saving a setup "
+                   "you mean to rely on.")
+    name = b.text_input("Name", key="sv_save_name", placeholder=f"{ctx.dataset}-{m}")
+    if b.button("Save setup", type="primary", key="sv_save_go", disabled=not name):
+        s.name = name.strip()
+        try:
+            setups.save(cfg.store_dir, s)
+        except ValueError as e:
+            st.error(str(e))
+        else:
+            st.success(f"Saved *{s.name}*. Apply it below.")
+
+
+def apply_setup(ctx, nm) -> None:
+    """V1.2 F4: run a saved setup over every recording in the dataset — the
+    labelled ones keep their labels, the rest get the model's lists, and the
+    export says which is which and what the model's lists were measured to be."""
+    heading(
+        "Apply a setup to the whole dataset",
+        "Runs a saved setup over **every** recording in this dataset. Where a "
+        "recording is labelled end to end, its list is the labels (an expert's list "
+        "beats a model's) with the model's verdict alongside; everywhere else, the "
+        "list is the model's output, marked as such. The export carries the setup's "
+        "measured performance: that is what a reader can trust the model-output rows "
+        "to mean.",
+        level="###")
+    usable = {}
+    for name in setups.list_setups(cfg.store_dir):
+        su = setups.load(cfg.store_dir, name)
+        runs = [m for m in ctx.included if th.identity(m) == su.model
+                and m.run_id in complete_runs(ctx.dataset)]
+        if runs:
+            usable[name] = (su, runs[0])
+    if not usable:
+        st.caption("No saved setup matches a model that has scored every recording "
+                   "here. Save one above (on a labelled dataset), with the same model "
+                   "run over this one.")
+        return
+    pick = st.selectbox("Setup", list(usable), key="sv_apply_pick")
+    su, run = usable[pick]
+    st.markdown(f"> {su.claim()}")
+    profiles = list_profiles(cfg.profiles_dir)
+    profile = su.profile if su.profile in profiles else ctx.profile_name
+    if profile != su.profile:
+        st.warning(f"Profile *{su.profile}* is not here; using *{profile}* to judge.")
+    if st.button("Apply to every recording", type="primary", key="sv_apply_go"):
+        recs = ctx.recordings["recording_id"].to_list()
+        with st.spinner("listing every recording…"):
+            out = setups.apply(su, get_survey_detections(run.run_id, su.judge, profile),
+                               recs, ctx.truth_obj)
+        out = out.with_columns(species=pl.col("species_key").map_elements(
+            nm, return_dtype=pl.Utf8))
+        d = Path(cfg.store_dir) / "datasets" / ctx.dataset / "results"
+        d.mkdir(parents=True, exist_ok=True)
+        out.write_csv(d / f"{su.name}.csv")
+        (d / f"{su.name}.txt").write_text(su.claim() + "\n")
+        st.session_state["sv_applied"] = (su.name, out)
+    applied = st.session_state.get("sv_applied")
+    if applied and applied[0] == pick:
+        out = applied[1]
+        by = out.group_by("source").agg(recordings=pl.col("recording_id").n_unique(),
+                                        rows=pl.len()).sort("source")
+        st.dataframe(by, hide_index=True)
+        st.dataframe(out.select("recording_id", "species", "listed", "source",
+                                "model_tier", "firm_bar_detections",
+                                "check_bar_detections"),
+                     hide_index=True, width="stretch", height=320)
+        c1, c2 = st.columns(2)
+        c1.download_button("Species lists (CSV)", out.write_csv(),
+                           f"{ctx.dataset}_{pick}_lists.csv", "text/csv",
+                           key="sv_apply_dl")
+        c2.download_button("What the model-output rows mean (TXT)", su.claim() + "\n",
+                           f"{ctx.dataset}_{pick}_claim.txt", "text/plain",
+                           key="sv_apply_claim")
 
 
 def infeasible(pick, cons: survey.Constraints, hand_rule: survey.SurveyRule, who: str):
@@ -807,15 +953,19 @@ def winner(entries: dict, order: list[str], cons: survey.Constraints) -> str:
     if len(ranked) == 1:
         return (f"**{top}** is the only model within your limits here; it {verb} "
                 f"({fmt(obj, v)})." + note)
-    lo, hi = entries[top]["intervals"][obj]
-    nlo, nhi = entries[ranked[1]]["intervals"][obj]
-    clear = (lo > nhi) if higher else (hi < nlo)
-    if not any(math.isnan(x) for x in (lo, hi, nlo, nhi)) and clear:
-        return (f"**{top}** wins: it {verb} ({fmt(obj, v)}), clear of {ranked[1]} "
-                "beyond the uncertainty." + note)
+    # Paired (V1.2 E2): both models on the same resampled recordings, so a hard
+    # recording counts against both and only the gap between them is tested.
+    diff, dlo, dhi = survey.paired(entries[top], entries[ranked[1]])[obj]
+    clear = (dlo > 0) if higher else (dhi < 0)
+    gap = (f"by {fmt(obj, abs(diff))} (95% interval of the difference "
+           f"{fmt(obj, dlo)} to {fmt(obj, dhi)})" if not math.isnan(dlo) else "")
+    if not any(math.isnan(x) for x in (dlo, dhi)) and clear:
+        return (f"**{top}** wins: it {verb} ({fmt(obj, v)}), ahead of {ranked[1]} "
+                f"{gap}, measured on the same recordings." + note)
     return (f"**No clear winner.** Of the models within your limits, {top} {verb} "
-            f"({fmt(obj, v)}), but its interval overlaps {ranked[1]}'s — these "
-            "recordings cannot separate them." + note)
+            f"({fmt(obj, v)}), but compared on the same recordings its lead over "
+            f"{ranked[1]} could go either way{' — ' + gap if gap else ''}. More "
+            "labelled recordings would narrow it." + note)
 
 
 def stat_bars(entries: dict, order: list[str], model_colour) -> alt.Chart | None:
@@ -1088,16 +1238,18 @@ def unlabelled(ctx, labels, order, colour, nm) -> None:
     for m, rid in labels.items():
         ev = get_survey_evidence(rid, ctx.dataset, ctx.judge, ctx.profile_name, ctx.spec,
                                  th.identity(ctx.manifest_of[rid]), None, (),
-                                 resolved_key(ctx.resolved[rid]))
+                                 resolved_key(ctx.resolved[rid]), ctx.truth_ref)
         t = survey.tiers(ev, rule, [rec]).filter(pl.col("tier") != "not found")
         for sp, tier, n in t.select("species_key", "tier", "firm_shown").iter_rows():
             rows.append({"species": nm(sp), "model": m, "tier": tier, "detections": n})
     if not rows:
         st.caption("No model lists anything in this recording.")
+        apply_setup(ctx, nm)
         return
     df = pd.DataFrame(rows).pivot_table(index="species", columns="model", values="tier",
                                         aggfunc="first").fillna("—").reset_index()
     st.dataframe(df, hide_index=True, width="stretch")
+    apply_setup(ctx, nm)
 
 
 render(sidebar.render())
