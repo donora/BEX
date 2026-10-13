@@ -53,3 +53,16 @@ def test_label_sample_progress_and_imported_datasets(tmp_path):
     ann = pl.DataFrame(schema=ANNOTATIONS_SCHEMA)
     write_dataset(tmp_path, "sne", recs(labelled=True), ann)
     assert flow.progress(tmp_path, tmp_path / "cache", "sne")["steps"]["labelled"][0] == "done"
+
+
+def test_recording_status_counts_labelled_and_queued_time(tmp_path):
+    write_dataset(tmp_path, "new", recs())
+    st, src = flow.recording_status(tmp_path, "new")
+    assert src == "" and st["labelled_s"].sum() == 0
+    ls = L.create_set(tmp_path, "new", "a", "me")
+    ls.sample = L.add_whole_recordings(ls.sample, recs(), ["r1"])
+    L.close_chunk(ls, "r1", 0.0, 60.0, "me")
+    L.save_set(tmp_path, ls)
+    st, src = flow.recording_status(tmp_path, "new")
+    r1 = st.filter(pl.col("recording_id") == "r1").row(0, named=True)
+    assert src == "a" and r1["labelled_s"] == 60.0 and r1["queued_s"] == 60.0

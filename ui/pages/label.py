@@ -8,7 +8,8 @@ activity guide on the navigator — no species, nothing on the spectrogram —
 because labels that start from a model's suggestions flatter that model.
 """
 from ui.common import *  # noqa: F403 — the shared app toolkit
-from ui import sidebar
+from ui import guide, sidebar
+from ui.glossary import TERMS
 
 NEW_SET = "➕ New label set…"
 VIEWS = ["Label", "Plan and sample", "Progress", "Publish and share", "How to"]
@@ -454,7 +455,8 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
     state = ls.chunk_state(rec_id, start)
 
     nxt = labels.next_chunk(ls)
-    c0, c1, c2, c3 = st.columns([0.9, 1.3, 1.3, 2.1], vertical_alignment="bottom")
+    c0, c1, c2, c3 = st.container(key="g_lab_move").columns([0.9, 1.3, 1.3, 2.1],
+                                                             vertical_alignment="bottom")
     # The neighbouring minutes of this recording: where a call that runs over
     # the boundary is finished (its first corner stays put).
     p1, p2 = c0.columns(2)
@@ -493,7 +495,8 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
           "sampled chunks closed</span></div>", unsafe_allow_html=True)
 
     # ---- the navigator, with the activity guide only ------------------------ #
-    clicked = navigator(ls, rec_id, duration, (start, end), activity)
+    with st.container(key="g_lab_nav"):
+        clicked = navigator(ls, rec_id, duration, (start, end), activity)
     if clicked is not None:
         go_to(rec_id, labels.chunk_of(clicked + 0.01))
         st.rerun()
@@ -547,9 +550,10 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
                                & (pl.col("start_s") < t1)) if show_expert else None)
     img, pos, x_ticks = chunk_figure(mel, meta, t0, t1, (start, end), shown, pending,
                                      corner, fmt, expert)
-    click = streamlit_image_coordinates(img, width="stretch",
-                                        key=f"lab_img_{rec_id}_{start:g}",
-                                        cursor="crosshair" if editable else "default")
+    with st.container(key="g_lab_spec"):
+        click = streamlit_image_coordinates(img, width="stretch",
+                                            key=f"lab_img_{rec_id}_{start:g}",
+                                            cursor="crosshair" if editable else "default")
     # The component hands back its last click on every rerun, so each click is
     # used at most once — and every click is marked as seen, even one ignored
     # because a box is waiting for its species or the minute is closed.
@@ -599,9 +603,10 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
                 focus = (r["start_s"], r["end_s"])
         if focus:
             focus = (max(focus[0], t0), min(focus[1], t1))
-        st.iframe(player_html(encode_mp3(y, sr), t0, t1, clip_lo, focus,
-                              pos.x0, pos.x1, x_ticks, window_label="box", clock=True),
-                  height=72)
+        with st.container(key="g_lab_player"):
+            st.iframe(player_html(encode_mp3(y, sr), t0, t1, clip_lo, focus,
+                                  pos.x0, pos.x1, x_ticks, window_label="box",
+                                  clock=True), height=72)
         if not pending and not focus and len(ls.chunk_boxes(rec_id, start, end)):
             st.caption("Select a box in the table below to mark it on the timeline and "
                        "play it on its own.")
@@ -610,7 +615,7 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
 
     # ---- name the box ------------------------------------------------------------ #
     left, right = st.columns([1.35, 1])
-    with left:
+    with left, st.container(key="g_lab_name"):
         if not editable and practice and reference is not None:
             practice_feedback(ls, reference, rec_id, start, end, fmt)
         elif not editable:
@@ -700,16 +705,28 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
 
     # ---- close / reopen ------------------------------------------------------------ #
     st.divider()
+    close_box = st.container(key="g_lab_close")
     if editable:
-        heard_all = st.checkbox(
+        heard_all = close_box.checkbox(
             "I listened to the whole minute, including stretches the guide left grey, "
-            "and every bird I heard has a box.", key=f"lab_ack_{rec_id}_{start:g}")
-        if st.button("Close this chunk ✓", type="primary", disabled=not heard_all,
-                     help="Signs the chunk off as ground truth. You can reopen it later."):
-            if not labeller:
-                st.error("Enter your name at the top first.")
-                return
-            labels.close_chunk(ls, rec_id, start, end, labeller)
+            "and every bird I heard has a box.", key=f"lab_ack_{rec_id}_{start:g}",
+            help="Closing the minute signs it off: " + TERMS["closed"][1])
+        # Whose sign-off this is, beside the button that makes it — the same name
+        # as the field at the top of the page, kept in step both ways.
+        st.session_state["lab_signoff_name"] = labeller or None
+        n_col, b_col = close_box.columns([1.4, 1], vertical_alignment="bottom")
+        signer = (n_col.selectbox(
+            "Signed off by", name_options(), key="lab_signoff_name",
+            accept_new_options=True, placeholder="Choose, or type a new name",
+            on_change=lambda: st.session_state.update(
+                labeller=(st.session_state["lab_signoff_name"] or "").strip() or None),
+            help="Recorded on the minute as the person who listened to it all. "
+                 "The same name as the one at the top of the page.") or "").strip()
+        if b_col.button("Close this chunk ✓", type="primary",
+                        disabled=not (heard_all and signer), width="stretch",
+                        help="Signs the minute off as ground truth, under your name. "
+                             "You can reopen it later."):
+            labels.close_chunk(ls, rec_id, start, end, signer)
             if save(ls):
                 nxt = labels.next_chunk(ls)
                 # In practice, stay to read the feedback; otherwise move on.
@@ -760,25 +777,60 @@ def add_to_sample(ls: labels.LabelSet, recordings: pl.DataFrame, labeller: str,
 def plan_view(ctx, ls: labels.LabelSet, labeller: str) -> None:
     recordings = ctx.recordings
     st.markdown("#### What to label")
-    st.markdown(
-        "Say how many minutes you want to label. BEX picks them **at random**, "
-        "balanced across sites, times of day and recordings, and hands them to you "
-        "one at a time on the *Label* view. Picking at random matters: labelling only "
-        "where the models fired would leave out the birds they miss.")
+    how = st.radio("How", ["Random minutes", "Whole recordings, start to finish"],
+                   horizontal=True, key="lab_how", label_visibility="collapsed")
     first = ls.sample.is_empty()
-    a, b = st.columns([1, 2], vertical_alignment="bottom")
-    n = a.number_input("Minutes to label" if first else "Minutes to add", 1, 600,
-                       START_MINUTES, step=1, key="lab_minutes",
-                       help=f"{START_MINUTES} minutes is a good start: enough to get a "
-                            "feel for the recordings. Add more whenever you like — the "
-                            "sample stays balanced however far you get.")
-    if b.button(f"Pick {int(n)} minute{'s' * (n != 1)}" if first
-                else f"Add {int(n)} more minute{'s' * (n != 1)}", type="primary",
-                disabled=ls.read_only):
-        add_to_sample(ls, recordings, labeller, minutes=int(n))
-        # The view switch is already drawn this run: park the change for the next.
-        st.session_state["lab_select_pending"] = (ls.dataset, ls.name, "Label")
-        st.rerun()
+    if how == "Random minutes":
+        st.markdown(
+            "Say how many minutes you want to label. BEX picks them **at random**, "
+            "balanced across sites, times of day and recordings, and hands them to you "
+            "one at a time on the *Label* view. Picking at random matters: labelling "
+            "only where the models fired would leave out the birds they miss.")
+        a, b = st.columns([1, 2], vertical_alignment="bottom")
+        n = a.number_input("Minutes to label" if first else "Minutes to add", 1, 600,
+                           START_MINUTES, step=1, key="lab_minutes",
+                           help=f"{START_MINUTES} minutes is a good start: enough to get "
+                                "a feel for the recordings. Add more whenever you like "
+                                "— the sample stays balanced however far you get.")
+        if b.button(f"Pick {int(n)} minute{'s' * (n != 1)}" if first
+                    else f"Add {int(n)} more minute{'s' * (n != 1)}", type="primary",
+                    disabled=ls.read_only):
+            add_to_sample(ls, recordings, labeller, minutes=int(n))
+            # The view switch is already drawn this run: park the change for the next.
+            st.session_state["lab_select_pending"] = (ls.dataset, ls.name, "Label")
+            st.rerun()
+    else:
+        st.markdown(
+            "Choose recordings to label **from start to finish**, a minute at a time "
+            "in order. Good when you want whole recordings done — a species list for "
+            "a recording can only be checked when all of it is labelled. For the "
+            "models' accuracy, random minutes spread over many recordings tell you "
+            "more for the same effort.")
+        t = labels.truth_from_set(ls, recordings, "")
+        queued = set(ls.sample["recording_id"]) if len(ls.sample) else set()
+        dur = dict(zip(recordings["recording_id"], recordings["duration_s"]))
+
+        def label_of(r: str) -> str:
+            done = t.covered_s.get(r, 0.0) / 60
+            return (f"{r} · {dur[r] / 60:.0f} min"
+                    + (f" · {done:.0f} min labelled" if done else "")
+                    + (" · in the sample" if r in queued else ""))
+        a, b = st.columns([3, 1.2], vertical_alignment="bottom")
+        pick = a.multiselect("Recordings", recordings["recording_id"].to_list(),
+                             key="lab_whole_pick", format_func=label_of,
+                             placeholder="Choose one or more recordings")
+        mins = sum(dur[r] for r in pick) / 60
+        if b.button(f"Add {len(pick)} recording{'s' * (len(pick) != 1)} "
+                    f"({mins:.0f} min)" if pick else "Add recordings", type="primary",
+                    disabled=not pick or ls.read_only, key="lab_whole_go"):
+            ls.sample = labels.add_whole_recordings(ls.sample, recordings, pick)
+            ls.meta.setdefault("draws", []).append({"whole_recordings": pick,
+                                                    "by": labeller})
+            (labels.set_dir(cfg.store_dir, ls.dataset, ls.name) / "meta.json").write_text(
+                json.dumps(ls.meta, indent=2) + "\n")
+            save(ls)
+            st.session_state["lab_select_pending"] = (ls.dataset, ls.name, "Label")
+            st.rerun()
 
     if not ls.sample.is_empty():
         closed = ls.chunks.filter(pl.col("state") == labels.CLOSED).select(
@@ -1090,6 +1142,17 @@ never count as ground truth.
 
 # --------------------------------------------------------------------------- #
 
+def name_options() -> list[str]:
+    """Names already used anywhere (most used first), plus whatever is typed
+    in this session — a picker, so a name is spelt the same way every time."""
+    names = labels.known_names(cfg.store_dir)
+    for k in ("labeller", "lab_signoff_name"):
+        v = (st.session_state.get(k) or "").strip()
+        if v and v not in names:
+            names.append(v)
+    return names
+
+
 def practice_offer(ctx, dataset: str, labeller: str) -> None:
     """On a dataset with expert labels: try labelling and see how you did."""
     with st.expander("🎓 New to labelling? Practise on minutes the experts have done"):
@@ -1116,9 +1179,16 @@ def render(ctx) -> None:
     if flash:
         getattr(st, flash[0])(flash[1])
 
-    c1, c2 = st.columns([2, 1])
-    labeller = c2.text_input("Your name", key="labeller", persist_state="session",
-                             help="Recorded on every box and every chunk you close.")
+    g1, g2 = st.columns([6, 1])
+    with g2:
+        guide.button("label")
+    c1, c2 = st.container(key="g_lab_set").columns([2, 1])
+    names = name_options()
+    labeller = (c2.selectbox(
+        "Your name", names, key="labeller", persist_state="session",
+        accept_new_options=True, index=None, placeholder="Choose, or type a new name",
+        help="Recorded on every box and every minute you close. Pick your name if it "
+             "is in the list, so it is spelt the same way every time.") or "").strip()
     sets = labels.list_sets(cfg.store_dir, dataset)
     key = f"label_set_{dataset}"
     pending = st.session_state.pop("lab_select_pending", None)
@@ -1154,8 +1224,8 @@ def render(ctx) -> None:
                    f"**{sidebar.VIEW_LABELLED}** in the sidebar, then *{ls.name}* under "
                    "**Scored against**.")
     if not labeller:
-        st.warning("Enter your name (top right) to label: every box and sign-off "
-                   "records who made it.")
+        st.warning("Enter your name — top right, or beside *Close this chunk* — to "
+                   "label: every box and sign-off records who made it.")
 
     if st.session_state.get("label_view") not in VIEWS:
         st.session_state["label_view"] = "Plan and sample" if ls.sample.is_empty() else "Label"
@@ -1192,3 +1262,4 @@ def render(ctx) -> None:
 
 
 render(sidebar.render())
+guide.show("label")

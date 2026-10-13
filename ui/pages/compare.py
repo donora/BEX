@@ -1,9 +1,13 @@
 """BEX · Compare models — what each model would give you, at the sidebar's settings."""
 from ui.common import *  # noqa: F403 — the shared app toolkit
-from ui import sidebar
+from ui import guide, sidebar
+from ui.glossary import term
 
 
 def render(ctx) -> None:
+    _, _g = st.columns([6, 1])
+    with _g:
+        guide.button('compare')
     dataset = ctx.dataset
     truth_ref = ctx.truth_ref
     recordings = ctx.recordings
@@ -83,23 +87,24 @@ def render(ctx) -> None:
                        "force below are unaffected.")
 
     # ---- 1 · headline cards: start with what each model would give you ------- #
-    heading(
-        f"What each model would give you — at {rule_tag}",
-        "One card per model, at the thresholds in force.\n\n"
-        "- **When it reports a bird** — every window it reports, by outcome. Blue is "
-        "right; orange is a bird that was not there. A detection the judge calls "
-        "implausible is one the filter would remove before you saw it: purple if it "
-        "was right after all (a real bird hidden), grey if hiding it was correct.\n"
-        "- **False detections per hour** — wrong detections you would actually see, "
-        "counted as events (one bird wrongly reported across three windows is one "
-        "false detection), per hour of audio.\n"
-        "- **When a bird is singing** — of the annotated songs, how many it found at "
-        "least once. Counted per song, not per window, so a 3 s and a 5 s model are "
-        "compared fairly.\n"
-        "- **Species by species** — one dot per species with enough labelled data "
-        f"(≥ {min_labelled} labelled windows, set in the sidebar), at the share of "
-        "its songs found. A tight cluster is a consistent model; a spread one is "
-        "excellent on some birds and blind to others.")
+    with st.container(key='g_cmp_cards'):
+        heading(
+            f"What each model would give you — at {rule_tag}",
+            "One card per model, at the thresholds in force.\n\n"
+            "- **When it reports a bird** — every window it reports, by outcome. Blue is "
+            "right; orange is a bird that was not there. A detection the judge calls "
+            "implausible is one the filter would remove before you saw it: purple if it "
+            "was right after all (a real bird hidden), grey if hiding it was correct.\n"
+            "- **False detections per hour** — wrong detections you would actually see, "
+            "counted as events (one bird wrongly reported across three windows is one "
+            "false detection), per hour of audio.\n"
+            "- **When a bird is singing** — of the annotated songs, how many it found at "
+            "least once. Counted per song, not per window, so a 3 s and a 5 s model are "
+            "compared fairly.\n"
+            "- **Species by species** — one dot per species with enough labelled data "
+            f"(≥ {min_labelled} labelled windows, set in the sidebar), at the share of "
+            "its songs found. A tight cluster is a consistent model; a spread one is "
+            "excellent on some birds and blind to others.")
     st.markdown(
         "<div style='font-size:0.85rem'>" + outcome_key(list(benchmark.REPORT_OUTCOMES))
         + " &nbsp; <span style='color:" + views.OUTCOME_COLOURS["missed"]
@@ -116,17 +121,19 @@ def render(ctx) -> None:
                 st.altair_chart(outcome_bar({k: v / rep_total for k, v in s["report"].items()},
                                             list(benchmark.REPORT_OUTCOMES)), width="stretch")
                 iv = B[m]["intervals"]
-                st.markdown(f"Precision **{s['precision']:.0%}**"
+                st.markdown(f"{term('precision', 'Precision')} **{s['precision']:.0%}**"
                             f"{ci(*iv['precision'])} · ≈ **{s['false_per_hour']:.0f}**"
-                            f"{ci(*iv['false_per_hour'], '{:.0f}')} false detections per "
-                            "hour of audio")
+                            f"{ci(*iv['false_per_hour'], '{:.0f}')} "
+                            f"{term('false_per_hour')} of audio",
+                            unsafe_allow_html=True)
                 sing_total = sum(s["singing"].values()) or 1
                 st.caption("When a bird is singing")
                 st.altair_chart(outcome_bar(
                     {("correct" if k == "found" else k): v / sing_total
                      for k, v in s["singing"].items()},
                     ["correct", "filter hid a real bird", "missed"]), width="stretch")
-                st.markdown(f"Finds **{s['found']:.0%}**{ci(*iv['found'])} of songs")
+                st.markdown(f"Finds **{s['found']:.0%}**{ci(*iv['found'])} of "
+                            f"{term('songs_found', 'songs')}", unsafe_allow_html=True)
 
                 ranked = ps.filter((pl.col("n_positive") >= min_labelled)
                                    & pl.col("found").is_not_null())
@@ -164,18 +171,19 @@ def render(ctx) -> None:
         paired_differences(B, order)
 
     # ---- 2 · precision–recall, with where your settings put each model -------- #
-    heading(
-        f"Precision and recall — where {rule_tag} puts each model",
-        "The standard picture of a detector. **Precision** (up): when the model "
-        "reports a bird, how often it is right. **Recall** (across): of the windows "
-        "where a bird was singing, how many it reported.\n\n"
-        "Each **line** is a model swept across every possible threshold, with all "
-        "annotated species pooled. Each **marker** is where the sidebar's settings "
-        "actually put it. Because those thresholds are set species by species, the "
-        "marker need not sit on the pooled line: **above the line means the "
-        "per-species thresholds beat any single threshold.**\n\n"
-        "Up and to the right is better. The shape of a line says how much precision "
-        "a model gives up to find more birds.")
+    with st.container(key='g_cmp_pr'):
+        heading(
+            f"Precision and recall — where {rule_tag} puts each model",
+            "The standard picture of a detector. **Precision** (up): when the model "
+            "reports a bird, how often it is right. **Recall** (across): of the windows "
+            "where a bird was singing, how many it reported.\n\n"
+            "Each **line** is a model swept across every possible threshold, with all "
+            "annotated species pooled. Each **marker** is where the sidebar's settings "
+            "actually put it. Because those thresholds are set species by species, the "
+            "marker need not sit on the pooled line: **above the line means the "
+            "per-species thresholds beat any single threshold.**\n\n"
+            "Up and to the right is better. The shape of a line says how much precision "
+            "a model gives up to find more birds.")
     st.markdown(
         "**Lines**: one threshold for every species, swept through every value. "
         f"**Markers**: your rule, {rule_tag} — a threshold per species. A marker "
@@ -567,16 +575,17 @@ def render(ctx) -> None:
 def paired_differences(B: dict, order: list[str]) -> None:
     """E2: is one model better than another on these recordings? Each pair is
     resampled together, so what the recordings share cancels out."""
-    heading(
-        "Is one model better here?",
-        "For each pair of models, the difference in each headline number, with a "
-        "95% interval from resampling recordings **together** — both models on the "
-        "same resampled recordings. That is a much sharper test than checking "
-        "whether the two models' own intervals overlap, because a hard recording "
-        "is hard for both.\n\n"
-        "**Higher / lower** means the interval for the difference leaves out zero: "
-        "on recordings like these, the gap is real. **No clear difference** means "
-        "it could go either way; more labelled recordings would narrow it.")
+    with st.container(key='g_cmp_paired'):
+        heading(
+            "Is one model better here?",
+            "For each pair of models, the difference in each headline number, with a "
+            "95% interval from resampling recordings **together** — both models on the "
+            "same resampled recordings. That is a much sharper test than checking "
+            "whether the two models' own intervals overlap, because a hard recording "
+            "is hard for both.\n\n"
+            "**Higher / lower** means the interval for the difference leaves out zero: "
+            "on recordings like these, the gap is real. **No clear difference** means "
+            "it could go either way; more labelled recordings would narrow it.")
     rows = []
     for i, a in enumerate(order):
         for b in order[i + 1:]:
@@ -594,7 +603,9 @@ def paired_differences(B: dict, order: list[str]) -> None:
                              "95% interval": (f"{f.format(lo)} to {f.format(hi)}"
                                               if np.isfinite(lo) else "—"),
                              "verdict": v})
-    st.dataframe(pl.DataFrame(rows), hide_index=True, width="stretch")
+    st.container(key="g_cmp_paired_df").dataframe(pl.DataFrame(rows), hide_index=True,
+                                                  width="stretch")
 
 
 render(sidebar.render())
+guide.show("compare")

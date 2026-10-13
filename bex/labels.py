@@ -298,6 +298,31 @@ def set_dir(store_dir: str | Path, dataset: str, name: str) -> Path:
     return labels_dir(store_dir, dataset) / name
 
 
+def known_names(store_dir: str | Path) -> list[str]:
+    """Everyone who has made a label set, drawn a box or signed off a minute,
+    in any dataset — offered as a list so a name is spelt the same way every
+    time. Most used first; 'imported' and blanks left out."""
+    counts: dict[str, int] = {}
+
+    def add(name, n=1):
+        name = (name or "").strip()
+        if name and name != "imported":
+            counts[name] = counts.get(name, 0) + n
+    root = Path(store_dir) / "datasets"
+    for meta in root.glob("*/labels/*/meta.json") if root.exists() else []:
+        try:
+            add(json.loads(meta.read_text()).get("created_by"))
+        except ValueError:
+            pass
+        d = meta.parent
+        for f, col in (("annotations.parquet", "labeller"), ("chunks.parquet", "closed_by")):
+            if (d / f).exists():
+                df = pl.read_parquet(d / f, columns=[col])
+                for name, n in df.group_by(col).len().iter_rows():
+                    add(name, n)
+    return sorted(counts, key=lambda k: (-counts[k], k.lower()))
+
+
 def has_imported(store_dir: str | Path, dataset: str) -> bool:
     return (Path(store_dir) / "datasets" / dataset / "annotations.parquet").exists()
 
@@ -715,6 +740,26 @@ def draw_sample(recordings: pl.DataFrame, n_chunks: int, seed: int = 0,
 def _srow(r: dict) -> dict:
     return {"recording_id": r["recording_id"], "start_s": r["start_s"],
             "end_s": r["end_s"], "stratum": r["stratum"]}
+
+
+def add_whole_recordings(sample: pl.DataFrame, recordings: pl.DataFrame,
+                         recording_ids: list[str]) -> pl.DataFrame:
+    """Queue chosen recordings to label start to finish — systematic, not
+    random: every minute of each, in time order, after whatever is already in
+    the sample (minutes already there are not queued twice)."""
+    chosen = recordings.filter(pl.col("recording_id").is_in(recording_ids))
+    order = {r: i for i, r in enumerate(recording_ids)}
+    pool = (with_strata(all_chunks(chosen))
+            .with_columns(_o=pl.col("recording_id").replace_strict(order, default=0))
+            .sort("_o", "start_s"))
+    if len(sample):
+        pool = pool.join(sample.select("recording_id", "start_s"),
+                         on=["recording_id", "start_s"], how="anti")
+    nxt = int(sample["order"].max()) + 1 if len(sample) else 0
+    new = pl.DataFrame([{**_srow(r), "order": nxt + i, "whole": True}
+                        for i, r in enumerate(pool.iter_rows(named=True))],
+                       schema=SAMPLE_SCHEMA) if len(pool) else _empty(SAMPLE_SCHEMA)
+    return pl.concat([sample.cast(SAMPLE_SCHEMA), new]).sort("order")
 
 
 def next_chunk(ls: LabelSet) -> dict | None:

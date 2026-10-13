@@ -97,6 +97,14 @@ Every dataset goes through the same steps, from the **Home** page:
     )
 
 
+def glossary() -> None:
+    from ui.glossary import glossary_markdown
+    st.markdown("#### Glossary")
+    st.caption("The words BEX uses, in plain English. Words underlined with dots "
+               "elsewhere in the app show these on hover.")
+    st.markdown(glossary_markdown())
+
+
 def welcome_again() -> None:
     from bex import prefs
     st.divider()
@@ -107,4 +115,5 @@ def welcome_again() -> None:
 
 
 render()
+glossary()
 welcome_again()

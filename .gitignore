@@ -25,3 +25,8 @@ uv.lock
 
 # Build output (python -m build)
 dist/
+
+# Tour screenshot tooling: its npm install and raw captures
+scripts/tour/node_modules/
+scripts/tour/package*.json
+scripts/tour/raw/

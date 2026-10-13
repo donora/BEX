@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import polars as pl
+
 from . import labels, setups, store
 from .ingest import read_dataset
 from .melcache import mel_path
@@ -139,3 +141,41 @@ def progress(store_dir: str | Path, cache_dir: str | Path, name: str) -> dict:
     if steps["models"][0] != "done":
         nxt = "models"
     return {"steps": steps, "next": nxt, "has_labels": labelled_any}
+
+
+def recording_status(store_dir: str | Path, name: str) -> tuple[pl.DataFrame, str]:
+    """Per recording: its length, the seconds labelled (closed), and the
+    seconds queued in the labelling sample but not yet closed — what the home
+    page draws. From the newest real label set, else the imported annotations
+    (every recording complete), else nothing labelled. Returns the frame and
+    where it came from."""
+    recs, _ = read_dataset(store_dir, name)
+    base = recs.select("recording_id", "duration_s")
+    sets = real_sets(store_dir, name)
+    if sets:
+        newest = max(sets, key=lambda x: (labels.set_dir(store_dir, name, x) / "meta.json")
+                     .stat().st_mtime)
+        ls = labels.load_set(store_dir, name, newest)
+        closed = ls.chunks.filter(pl.col("state") == labels.CLOSED)
+        done = closed.group_by("recording_id").agg(
+            labelled_s=(pl.col("end_s") - pl.col("start_s")).sum())
+        todo = (ls.sample.join(closed, on=["recording_id", "start_s"], how="anti")
+                .group_by("recording_id").agg(
+                    queued_s=(pl.col("end_s") - pl.col("start_s")).sum())
+                if len(ls.sample) else
+                pl.DataFrame(schema={"recording_id": pl.Utf8, "queued_s": pl.Float64}))
+        out = (base.join(done, on="recording_id", how="left")
+               .join(todo, on="recording_id", how="left"))
+        source = newest
+    elif labels.has_imported(store_dir, name):
+        out = base.with_columns(
+            labelled_s=pl.when(pl.col("recording_id").is_in(
+                recs.filter(pl.col("labelled"))["recording_id"].to_list()))
+            .then(pl.col("duration_s")).otherwise(0.0), queued_s=pl.lit(0.0))
+        source = "imported annotations"
+    else:
+        out = base.with_columns(labelled_s=pl.lit(0.0), queued_s=pl.lit(0.0))
+        source = ""
+    return (out.with_columns(pl.col("labelled_s").fill_null(0.0),
+                             pl.col("queued_s").fill_null(0.0))
+               .sort("recording_id")), source

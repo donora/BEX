@@ -27,23 +27,31 @@ report everywhere, with no right or wrong).
 1. **The flow**, numbered left to right: *1 · Label* to make ground truth,
    *2 · Explorer* to look and listen, *3 · Analysis* to compare the models, and
    *4 · Survey protocol* to decide how to turn detections into species lists.
+   *🧭 Guide me*, on every page, walks you through that page step by step.
 2. **What you are looking at**: the current dataset and its view — *scored*
    (labelled data) or *unscored* (all recordings). Click it to switch.
-3. **Each dataset's progress** through the same steps: *Add → Run models →
-   Label → Explore → Analyse → Survey protocol → Apply*. A tick is done, a half
-   circle under way; the outlined step is the next one. Hover a step for detail.
-4. **Continue** goes to the next step. *Label* and *Explore all recordings* are
+3. **The dataset at a glance**: a square per recording, filling green as it is
+   labelled (pale blue: queued to label), with a bar for all its audio and the
+   numbers. Every recording of the demo set came labelled, so all are solid.
+4. **Its progress** through the same steps: *Add → Run models → Label →
+   Explore → Analyse → Survey protocol → Apply*. A tick is done, a half circle
+   under way; the outlined step is the next one. Hover a step for detail.
+5. **Continue** goes to the next step. *Label* and *Explore all recordings* are
    always there: neither closes off the other.
-5. **A dataset part-way through labelling**: here 3 of 5 sampled minutes done.
-6. **Profile, spectrograms and models**: the dataset's plausibility profile,
+6. **A dataset part-way through labelling**: three recordings started (green
+   outline), a few minutes in each.
+7. **Profile, spectrograms and models**: the dataset's plausibility profile,
    its spectrograms and its model runs, each with a progress bar and a button.
    For a new dataset these sit open in the card until they are done; a file the
    audio library cannot read is repaired here, before a model run trips over it.
-7. **Add a dataset**: a folder of recordings, a site name, its location and a
+8. **Add a dataset**: a folder of recordings, a site name, its location and a
    plausibility profile (BEX suggests one from the location).
-8. **Upload a plausibility profile**: your own species list for a site, as a
+9. **Upload a plausibility profile**: your own species list for a site, as a
    CSV of scientific or common names with an optional tier — the UK starter
    list downloads as a template.
+
+The first time you open BEX, a short welcome offers three ways in: practise
+labelling on the demo data, explore it, or add your own recordings.
 
 ---
 
@@ -56,22 +64,22 @@ labelling only where the models fired would leave out the birds they miss.
 ![Labelling a minute](docs/tour/label-chunk.png)
 
 1. **Moving around**: ◀ ▶ step to the previous or next minute of this
-   recording; *Next chunk in the sample* goes to the next random minute.
+   recording; *Next chunk in the sample* goes to the next minute to label.
    *Choose a chunk by hand* opens any minute (marked as chosen by hand).
 2. **Where you are**: the recording, the minute, its place in the sample, and
    whether it is open or closed.
-3. **A guide to where the recording is busy**: grey bars where BirdNET or Perch
-   hear *something* bird-like. Deliberately loose, and it names no species.
-4. **Every minute of the recording**, coloured by state — closed (green), in
-   the sample (blue), not sampled. Click one to open it.
-5. **A box drawn with two clicks**: one corner, then the opposite one. The red
+3. **The whole recording**: grey bars where BirdNET or Perch hear *something*
+   bird-like — a deliberately loose guide to busy and quiet stretches that names
+   no species — and below them every minute, coloured by state: closed (green),
+   in the sample (blue), not sampled. Click a minute to open it.
+4. **A box drawn with two clicks**: one corner, then the opposite one. The red
    ✕ throws it away.
-6. **The neighbouring minutes**, shaded either side. A call that crosses the
+5. **The neighbouring minutes**, shaded either side. A call that crosses the
    minute can be boxed into them, or finished in the next minute (▶, then the
    second click).
-7. **The player**, on the same time axis. *▶ box* plays just the box you have
+6. **The player**, on the same time axis. *▶ box* plays just the box you have
    drawn (or the one selected in the box list), marked on the timeline.
-8. **The new box**, waiting for its species.
+7. **The new box**, waiting for its species.
 
 ![Suggested birds for a box](docs/tour/label-suggest.png)
 
@@ -93,10 +101,19 @@ minutes count as ground truth, and a closed minute with no boxes means
 
 ![What to label](docs/tour/label-plan.png)
 
-1. **How many minutes**: 5 is a good start; add more whenever you like.
-2. **How far you are** through the sample.
-3. **How much more?** Once a few recordings have labels, BEX measures how much
+1. **Random minutes, or whole recordings.** Random minutes, spread over sites,
+   times of day and recordings, tell you most about the models for the effort.
+   *Whole recordings, start to finish* queues the recordings you choose, every
+   minute in order — what a survey protocol needs.
+2. **How many minutes**: 5 is a good start; add more whenever you like.
+3. **How far you are** through the sample.
+4. **How much more?** Once a few recordings have labels, BEX measures how much
    they vary and projects how many more you need for a given precision.
+
+**New to labelling?** On a dataset with expert labels, *Practise on minutes the
+experts have done*: label a few minutes and, as you close each, BEX shows which
+of the experts' calls you found, named differently or missed — with each to
+listen to. Practice labels never count as ground truth.
 
 ![Progress](docs/tour/label-progress.png)
 
@@ -368,6 +385,8 @@ Override any threshold by hand, and save the lot as a named set that you can
 apply to recordings that have no annotations.
 
 ---
+
+*These screenshots are made by `scripts/tour/make_tour.py`.*
 
 **Try it:** `pip install bex-bioacoustics`, then follow the
 [README](README.md). Feedback and bug reports are welcome as

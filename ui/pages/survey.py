@@ -1,7 +1,7 @@
 """BEX · Survey protocol — from detections to a species list, with a tier for an
 expert to check (V1.1). The engine is `bex.survey`."""
 from ui.common import *  # noqa: F403 — the shared app toolkit
-from ui import sidebar
+from ui import guide, sidebar
 
 import math
 
@@ -55,6 +55,9 @@ def key_html(order: list[str]) -> str:
 
 
 def render(ctx) -> None:
+    _, _g = st.columns([6, 1])
+    with _g:
+        guide.button('survey')
     dataset = ctx.dataset
     truth_ref = ctx.truth_ref
     recordings = ctx.recordings
@@ -749,15 +752,16 @@ def apply_setup(ctx, nm) -> None:
     """V1.2 F4: run a saved setup over every recording in the dataset — the
     labelled ones keep their labels, the rest get the model's lists, and the
     export says which is which and what the model's lists were measured to be."""
-    heading(
-        "Apply a setup to the whole dataset",
-        "Runs a saved setup over **every** recording in this dataset. Where a "
-        "recording is labelled end to end, its list is the labels (an expert's list "
-        "beats a model's) with the model's verdict alongside; everywhere else, the "
-        "list is the model's output, marked as such. The export carries the setup's "
-        "measured performance: that is what a reader can trust the model-output rows "
-        "to mean.",
-        level="###")
+    with st.container(key="g_sv_apply"):
+        heading(
+            "Apply a setup to the whole dataset",
+            "Runs a saved setup over **every** recording in this dataset. Where a "
+            "recording is labelled end to end, its list is the labels (an expert's list "
+            "beats a model's) with the model's verdict alongside; everywhere else, the "
+            "list is the model's output, marked as such. The export carries the setup's "
+            "measured performance: that is what a reader can trust the model-output rows "
+            "to mean.",
+            level="###")
     usable = {}
     for name in setups.list_setups(cfg.store_dir):
         su = setups.load(cfg.store_dir, name)
@@ -794,12 +798,13 @@ def apply_setup(ctx, nm) -> None:
         out = applied[1]
         by = out.group_by("source").agg(recordings=pl.col("recording_id").n_unique(),
                                         rows=pl.len()).sort("source")
-        st.dataframe(by, hide_index=True)
-        st.dataframe(out.select("recording_id", "species", "listed", "source",
+        st.container(key="sv_apply_summary").dataframe(by, hide_index=True)
+        st.container(key="sv_apply_table").dataframe(out.select(
+                                "recording_id", "species", "listed", "source",
                                 "model_tier", "firm_bar_detections",
                                 "check_bar_detections"),
                      hide_index=True, width="stretch", height=320)
-        c1, c2 = st.columns(2)
+        c1, c2 = st.container(key="sv_apply_dl").columns(2)
         c1.download_button("Species lists (CSV)", out.write_csv(),
                            f"{ctx.dataset}_{pick}_lists.csv", "text/csv",
                            key="sv_apply_dl")
@@ -1253,3 +1258,4 @@ def unlabelled(ctx, labels, order, colour, nm) -> None:
 
 
 render(sidebar.render())
+guide.show("survey")

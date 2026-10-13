@@ -1,6 +1,6 @@
 """BEX · Explorer."""
 from ui.common import *  # noqa: F403 — the shared app toolkit
-from ui import sidebar
+from ui import guide, sidebar
 
 
 def render(ctx) -> None:
@@ -22,6 +22,9 @@ def render(ctx) -> None:
     fitted_here = ctx.fitted_here
 
     # ---- which recording ---------------------------------------------------- #
+    _, g = st.columns([6, 1])
+    with g:
+        guide.button("explorer")
     c1, c2 = st.columns([3, 1])
     rec_id = c1.selectbox("Recording", recordings["recording_id"].to_list(),
                           key="explorer_rec", persist_state="session")
@@ -632,3 +635,4 @@ def render(ctx) -> None:
 
 
 render(sidebar.render())
+guide.show("explorer")

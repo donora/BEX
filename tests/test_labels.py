@@ -297,3 +297,27 @@ def test_a_practice_set_is_marked_and_samples_labelled_recordings(tmp_path):
     assert L.is_practice(tmp_path, "sne", ls.name)
     again = L.create_practice(tmp_path, "sne", "Mara D", recordings(labelled=True), 3)
     assert again.name == ls.name                                   # reused, not duplicated
+
+
+def test_whole_recordings_are_queued_in_order_after_the_sample():
+    recs = recordings(n=3, dur=180.0)
+    s = L.draw_sample(recs, 2, seed=0)
+    out = L.add_whole_recordings(s, recs, ["r2", "r0"])
+    new = out.filter(pl.col("order") >= 2)
+    already = set(s.select("recording_id", "start_s").iter_rows())
+    # every minute of r2 then r0, in time order, none already sampled twice
+    assert all(r == "r2" for r in new.head(3 - sum(k[0] == "r2" for k in already))["recording_id"])
+    assert new["whole"].all() and out.select(pl.struct("recording_id", "start_s").n_unique()).item() == len(out)
+    assert set(out.filter(pl.col("recording_id") == "r0")["start_s"]) == {0.0, 60.0, 120.0}
+    first_r0 = new.filter(pl.col("recording_id") == "r0")["order"].min()
+    assert new.filter(pl.col("recording_id") == "r2")["order"].max() < first_r0
+
+
+def test_known_names_are_offered_most_used_first(store):
+    ls = L.create_set(store, "site", "mine", "Mara")
+    L.add_box(ls, "r0", 1, 2, 1, 2, ROBIN, "Mara")
+    L.add_box(ls, "r0", 3, 4, 1, 2, ROBIN, "Mara")
+    L.add_box(ls, "r0", 5, 6, 1, 2, ROBIN, "Sam")
+    L.close_chunk(ls, "r0", 0.0, 60.0, "Sam ")
+    L.save_set(store, ls)
+    assert L.known_names(store) == ["Mara", "Sam"]

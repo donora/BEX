@@ -2,7 +2,7 @@
 from ui.common import *  # noqa: F403 — the shared app toolkit
 from bex import flow, prefs, runners
 from bex.profiles import ProfileError, profile_from_csv, save_profile, suggest_profile
-from ui import sidebar
+from ui import guide, sidebar
 
 def masthead() -> None:
     """The logo — B and EX in their two colours — over the name it abbreviates,
@@ -69,14 +69,64 @@ def labels_fact(d: str, recs: pl.DataFrame) -> str:
             f"{'s' * (len(t.recordings) != 1)} ({sets[-1]}){more}")
 
 
-def dataset_card(d: str) -> None:
+GREEN, QUEUED, EMPTY = "#3e8e5e", "#9cc3e6", "#e6e4dd"
+
+
+def status_pictograph(d: str) -> str:
+    """The dataset at a glance: a square per recording, filled from the bottom
+    by the share labelled (green) and queued to label (blue); a green outline
+    once a recording has any labels at all. Then one bar for the whole
+    dataset's audio, and the numbers."""
+    st_, source = flow.recording_status(cfg.store_dir, d)
+    n = len(st_)
+    size = 16 if n <= 60 else 11 if n <= 160 else 7
+    cells = []
+    for r in st_.iter_rows(named=True):
+        dur = max(r["duration_s"], 1e-9)
+        lab = min(1.0, r["labelled_s"] / dur)
+        que = min(1.0 - lab, r["queued_s"] / dur)
+        a, b = 100 * lab, 100 * (lab + que)
+        fill = (f"linear-gradient(to top, {GREEN} 0 {a:.1f}%, {QUEUED} {a:.1f}% {b:.1f}%, "
+                f"{EMPTY} {b:.1f}% 100%)")
+        ring = f"box-shadow:inset 0 0 0 2px {GREEN};" if r["labelled_s"] > 0 else ""
+        tip = (f"{r['recording_id']}: {r['labelled_s'] / 60:.0f} of {dur / 60:.0f} min "
+               f"labelled" + (f", {r['queued_s'] / 60:.0f} queued" if r["queued_s"] else ""))
+        cells.append(f"<span title='{tip}' style='display:inline-block; width:{size}px; "
+                     f"height:{size}px; margin:0 3px 3px 0; border-radius:3px; "
+                     f"background:{fill}; {ring}'></span>")
+    total = float(st_["duration_s"].sum()) or 1.0
+    lab_s, que_s = float(st_["labelled_s"].sum()), float(st_["queued_s"].sum())
+    started = int((st_["labelled_s"] > 0).sum())
+    complete = int((st_["labelled_s"] >= st_["duration_s"] - 1).sum())
+    lw = 100 * lab_s / total
+    qw = 100 * que_s / total
+    # A sliver that is there should be seen: at least 0.6% wide when non-zero.
+    lw_d = max(lw, 0.6) if lab_s else 0.0
+    qw_d = max(qw, 0.6) if que_s else 0.0
+    bar = (f"<div style='display:flex; height:8px; border-radius:4px; overflow:hidden; "
+           f"background:{EMPTY}; margin:2px 0 4px; max-width:520px'>"
+           f"<div style='width:{lw_d:.2f}%; background:{GREEN}'></div>"
+           f"<div style='width:{qw_d:.2f}%; background:{QUEUED}'></div></div>")
+    words = (f"<b>{started}</b> of {n} recordings started, <b>{complete}</b> complete · "
+             f"<b>{lab_s / 60:,.0f}</b> of {total / 60:,.0f} min labelled ({lw:.1f}%)"
+             + (f" · {que_s / 60:,.0f} min queued" if que_s else "")
+             + (f" · <i>{source}</i>" if source else ""))
+    key = (f"<span style='color:{GREEN}'>■</span> labelled &nbsp;"
+           f"<span style='color:{QUEUED}'>■</span> queued to label &nbsp;"
+           f"<span style='color:#c9c7bf'>■</span> not yet")
+    return (f"<div style='margin:0.35rem 0 0.4rem'>"
+            f"<div style='line-height:0'>{''.join(cells)}</div>{bar}"
+            f"<div style='font-size:0.8rem; opacity:0.8'>{words}<br>{key}</div></div>")
+
+
+def dataset_card(d: str, i: int = 0) -> None:
     recs, _ = get_dataset(d)
     hours = float(recs["duration_s"].sum()) / 3600
     sites = recs["site"].replace("", None).drop_nulls().n_unique()
     p = flow.progress(cfg.store_dir, cfg.cache_dir, d)
     steps, nxt = p["steps"], p["next"]
     ready = steps["models"][0] == "done"
-    with st.container(border=True):
+    with st.container(border=True, key=f"card_{i}"):
         top, buttons = st.columns([2.4, 1.3], vertical_alignment="top")
         with top:
             current = " · <i>current</i>" if st.session_state.get("dataset") == d else ""
@@ -85,7 +135,10 @@ def dataset_card(d: str) -> None:
                         f"site{'s' * (sites != 1)} · {len(recs):,} recordings · "
                         f"{hours:,.1f} h · {labels_fact(d, recs)}{current}</div>",
                         unsafe_allow_html=True)
-            st.markdown(strip_html(steps, nxt), unsafe_allow_html=True)
+            st.container(key=f"picto_{i}").markdown(status_pictograph(d),
+                                                    unsafe_allow_html=True)
+            st.container(key=f"strip_{i}").markdown(strip_html(steps, nxt),
+                                                    unsafe_allow_html=True)
             if nxt:
                 st.caption(f"Next: **{flow.STEPS[nxt]}** — {steps[nxt][1]}.")
         with buttons:
@@ -430,6 +483,9 @@ def welcome(datasets: list[str]) -> None:
 
 def render() -> None:
     masthead()
+    _, g = st.columns([6, 1])
+    with g:
+        guide.button("home")
     st.markdown(
         "Every dataset goes through the same flow: **label** a random sample of it, "
         "**explore** what each model hears, **analyse** how well each does against "
@@ -449,14 +505,16 @@ def render() -> None:
     if not datasets:
         st.info("No datasets yet. Add a folder of recordings below to begin — or, for "
                 "the demonstration set, `bex ingest-sne` (see the README).")
-    for d in datasets:
-        dataset_card(d)
+    for i, d in enumerate(datasets):
+        dataset_card(d, i)
 
-    with st.expander("➕ Add a dataset",
-                     expanded=not datasets or st.session_state.pop("home_open_add", False)):
+    with st.container(key="g_add"), st.expander(
+            "➕ Add a dataset",
+            expanded=not datasets or st.session_state.pop("home_open_add", False)):
         add_dataset()
-    with st.expander("📄 Upload a plausibility profile"):
+    with st.container(key="g_profile"), st.expander("📄 Upload a plausibility profile"):
         upload_profile()
+    guide.show("home")
 
     st.page_link("ui/pages/about.py", label="About BEX — what it measures and why",
                  icon="ℹ️")

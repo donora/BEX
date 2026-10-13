@@ -13,6 +13,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ui.common import *  # noqa: F403 — the shared app toolkit
+from ui.glossary import term
 
 NO_SET = "none (rule only)"
 FIT_HERE, FROM_SET = "fit on this dataset", "the set's saved thresholds"
@@ -142,13 +143,13 @@ def status_panel(dataset: str, recordings: pl.DataFrame, ref: str,
              f"{sites} site{'s' * (sites != 1)} · {len(recordings):,} recordings · "
              f"{hours:,.1f} h of audio"]
     if t is None:
-        lines.append(f"<span style='color:{c['deep']}'><b>All recordings, unscored.</b>"
+        lines.append(f"<span style='color:{c['deep']}'><b>{term('unscored', 'All recordings, unscored')}.</b>"
                      "</span> Every number is what the models reported, with no right "
                      "or wrong.")
     else:
         lab_sites = recordings.filter(pl.col("recording_id").is_in(t.recordings))[
             "site"].replace("", None).drop_nulls().n_unique()
-        lines.append(f"<span style='color:{c['deep']}'><b>Labelled data, scored</b></span>"
+        lines.append(f"<span style='color:{c['deep']}'><b>{term('scored', 'Labelled data, scored')}</b></span>"
                      f" against {t.label}.")
         if t.exhaustive:
             lines.append(f"<b>Labelled:</b> every recording, end to end ({t.hours:,.1f} h)")
@@ -246,10 +247,12 @@ def render() -> SimpleNamespace:
                                persist_state="session",
                                help="Choose a dataset here or on the Home page.")
         recordings, _ = get_dataset(dataset)
-        truth_ref = truth_choice(dataset)
+        with st.container(key="g_view"):
+            truth_ref = truth_choice(dataset)
         truth_obj = get_truth(dataset, truth_ref)
         annotations = truth_obj.annotations if truth_obj is not None else None
-        status_panel(dataset, recordings, truth_ref, truth_obj)
+        with st.container(key="g_status"):
+            status_panel(dataset, recordings, truth_ref, truth_obj)
     view_line(dataset, truth_obj)
     with st.sidebar:
         st.markdown("### Experiment settings")
@@ -305,18 +308,17 @@ def render() -> SimpleNamespace:
                        + (", so nothing is implausible for it under this judge."
                           if judge == "geofilter" else "; only the profile judges it."))
 
-        delta = st.slider("Δ (shadowing band)", 0.05, 0.50, 0.15, 0.05, key="delta",
-                          persist_state="session",
-                          help="A plausible detection with an implausible rival scoring "
-                               "within Δ of it is shadowed — the map, not the model, "
-                               "made the identification.")
-
         st.markdown("**Thresholds**")
         rule_kind = st.selectbox(
             "Threshold rule", th.RULE_KINDS, key="rule_kind", persist_state="session",
             help="How each model's threshold is chosen, species by species. θ is not "
                  "comparable between models, so every model gets its own. Everything "
                  "this produces, and hand overrides, are on the Thresholds page.")
+        p_floor = st.slider("Precision floor", 0.50, 0.99, step=0.01, key="p_floor",
+                            persist_state="session",
+                            help="For the precision-floor rule: the highest recall "
+                                 "available while staying this precise. Also the "
+                                 "floor the Compare page reports.")
         sets = th.list_sets(cfg.thresholds_dir)
         if st.session_state.get("active_set") not in [NO_SET, *sets]:
             st.session_state["active_set"] = NO_SET
@@ -341,12 +343,7 @@ def render() -> SimpleNamespace:
                                    "the thresholds a saved set was fitted on — the way "
                                    "to threshold recordings with no annotations.")
 
-        with st.expander("Rule settings"):
-            p_floor = st.slider("Precision floor", 0.50, 0.99, step=0.01, key="p_floor",
-                                persist_state="session",
-                                help="For the precision-floor rule: the highest recall "
-                                     "available while staying this precise. Also the "
-                                     "floor the Compare page reports.")
+        with st.expander("Advanced settings"):
             min_support = st.slider(
                 "Minimum predicted windows", 1, 200, step=1, key="min_support",
                 persist_state="session",
@@ -383,6 +380,13 @@ def render() -> SimpleNamespace:
                                         format="%.4f", key=f"fixed::{ident}",
                                         persist_state="session")
                     fixed.append((ident, float(v)))
+            st.divider()
+            delta = st.slider("Δ (shadowing band)", 0.05, 0.50, 0.15, 0.05, key="delta",
+                              persist_state="session",
+                              help="A plausible detection with an implausible rival "
+                                   "scoring within Δ of it is shadowed — the map, not "
+                                   "the model, made the identification. Used by the "
+                                   "Geofilter and Species scorecard pages.")
 
         spec = th.RuleSpec(rule_kind, p_floor, min_support, min_pos, fallback,
                            tuple(sorted(fixed)), min_labelled=min_labelled)
