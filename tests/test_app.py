@@ -295,3 +295,19 @@ def test_thresholds_page_takes_an_override():
     assert not at.exception
     caps = " ".join(str(c.value) for c in at.sidebar.caption)
     assert "1 override(s)" in caps and "unsaved changes" in caps
+
+
+def test_label_offers_import_before_any_set_exists():
+    """A dataset with no label set gets only the first screen (no views), so the
+    import must be offered there — it used to live only under Publish and share."""
+    from bex import labels
+    from bex.config import load_config
+    store_dir = load_config(None).store_dir
+    at = open_page("label")
+    ds = next(s for s in at.sidebar.selectbox if s.label == "Dataset")
+    bare = [d for d in ds.options if not labels.list_sets(store_dir, d)]
+    if not bare:
+        pytest.skip("every local dataset already has a label set")
+    ds.set_value(bare[0]).run()
+    assert not at.exception
+    assert any(t.label == "New set name" for t in at.text_input)

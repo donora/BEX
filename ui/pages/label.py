@@ -1040,12 +1040,21 @@ def share_view(ctx, ls: labels.LabelSet, labeller: str) -> None:
     b.download_button("Chunks (CSV)", labels.export_chunks_csv(ls),
                       f"{dataset}_{ls.name}_chunks.csv", "text/csv")
 
+    import_form(ctx, labeller)
+
+
+def import_form(ctx, labeller: str) -> None:
+    """Annotations from a file -> a new label set. Offered on the first screen
+    too: a dataset with no set yet has no views, and importing *is* starting one."""
+    dataset, recordings = ctx.dataset, ctx.recordings
+    names = get_names()
     st.markdown("#### Import annotations as a new set")
     st.markdown(
-        "A CSV in SNE's columns (as exported above), a **Raven** selection table, or an "
-        "**Audacity** label track (one recording per file: its name must match the "
-        "recording's). Species may be scientific or common names; anything that cannot "
-        "be matched is listed and the import is refused, never silently dropped.")
+        "A CSV in SNE's columns (as exported from *Publish and share*), a **Raven** "
+        "selection table, or an **Audacity** label track (one recording per file: its "
+        "name must match the recording's). Species may be scientific or common names; "
+        "anything that cannot be matched is listed and the import is refused, never "
+        "silently dropped.")
     with st.form("import"):
         up = st.file_uploader("Annotations file", type=["csv", "txt", "tsv"])
         name = st.text_input("New set name")
@@ -1210,6 +1219,9 @@ def render(ctx) -> None:
             st.info(f"**{dataset}** came with annotations, so it can be scored already. "
                     "Start a set here to add to them (a copy) or to label it yourself.")
         new_set_form(dataset, labeller)
+        import_form(ctx, labeller)
+        with st.expander("How to label"):
+            howto_view()
         return
 
     ls = load(dataset, choice)

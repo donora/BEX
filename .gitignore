@@ -30,3 +30,6 @@ dist/
 scripts/tour/node_modules/
 scripts/tour/package*.json
 scripts/tour/raw/
+
+# Local model checkpoint pointer for the birdsong runner
+envs/birdsong/checkpoint.txt
