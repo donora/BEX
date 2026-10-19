@@ -66,3 +66,22 @@ def test_recording_status_counts_labelled_and_queued_time(tmp_path):
     st, src = flow.recording_status(tmp_path, "new")
     r1 = st.filter(pl.col("recording_id") == "r1").row(0, named=True)
     assert src == "a" and r1["labelled_s"] == 60.0 and r1["queued_s"] == 60.0
+
+
+def test_an_exhaustive_import_counts_as_labelled(tmp_path):
+    """An exhaustive import closes every chunk and draws no sample; it used to
+    read 'partial — no sample drawn' forever."""
+    write_dataset(tmp_path, "new", recs())
+    rob = "Turdus migratorius"
+    boxes, _ = L.read_annotation_file(
+        "Filename,Start Time (s),End Time (s),Low Freq (Hz),High Freq (Hz),Species\n"
+        f"r0.wav,1,2,1000,4000,{rob}\n", "x.csv", recs(), {rob: rob})
+    ls = L.import_boxes(tmp_path, "new", "experts", boxes, recs(), exhaustive=True,
+                        created_by="me")
+    p = flow.progress(tmp_path, tmp_path / "cache", "new")
+    assert p["steps"]["labelled"][0] == "done", p["steps"]["labelled"]
+
+    L.reopen_chunk(ls, "r0", 0.0, "missed a wren")   # still editable: back to partial
+    L.save_set(tmp_path, ls)
+    assert flow.progress(tmp_path, tmp_path / "cache", "new")["steps"]["labelled"][0] \
+        == "partial"

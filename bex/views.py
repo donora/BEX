@@ -155,6 +155,39 @@ def common_name_index(store_dir: str | Path,
     return names
 
 
+def ebird_code_index(labels_dir: str | Path | None = None,
+                     profiles_dir: str | Path | None = None) -> dict[str, str]:
+    """eBird code (lower case) -> species_key, from everything that carries codes.
+
+    Annotation files often name species by eBird code (SNE's own CSV does), but
+    no model's labels do. Codes come from the dataset's species list
+    (`labels_dir/species.csv`) and from any profile whose tiers.csv has an
+    `ebird_code` column — the profiles ship with the package, the species list
+    may not.
+    """
+    codes: dict[str, str] = {}
+    if profiles_dir is not None and Path(profiles_dir).exists():
+        from .profiles import ProfileError, load_profile
+        for d in sorted(p for p in Path(profiles_dir).iterdir() if p.is_dir()):
+            try:
+                prof = load_profile(d)
+            except ProfileError:
+                continue
+            for key, extra in prof.extras.items():
+                if code := (extra.get("ebird_code") or "").strip().lower():
+                    codes.setdefault(code, key)
+    if labels_dir is not None and (Path(labels_dir) / "species.csv").exists():
+        from .taxonomy import canonical_from_sne
+        try:
+            for key, code in canonical_from_sne(labels_dir).select(
+                    "species_key", "ebird_code").iter_rows():
+                if code:
+                    codes.setdefault(code.lower(), key)
+        except (KeyError, pl.exceptions.PolarsError):
+            pass
+    return codes
+
+
 def display_name(key: str, names: dict[str, str]) -> str:
     """The name to show: common name if known, else the key made readable."""
     return names.get(key) or key.replace("_", " ")

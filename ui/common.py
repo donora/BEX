@@ -198,6 +198,20 @@ def get_scorecard(run_id: str, dataset: str, grid_name: str, precision_target: f
             "resolution": truth.rank_resolution(aligned)}
 
 
+def align_prompt(run_ids: list[str], dataset: str, truth_ref: str, key: str) -> None:
+    """The models have labels to fit their thresholds on but have not been
+    aligned against them yet, so nothing has a θ and every page draws nothing.
+    Say so, and offer the one click that fixes it."""
+    st.warning(f"**{len(run_ids)} model run(s) are not yet aligned against "
+               f"*{labels.describe_ref(truth_ref)}*,** so their thresholds cannot be "
+               "fitted and no detections are shown. Aligning reads every stored "
+               "score once and is cached.")
+    if st.button(f"Align {len(run_ids)} run(s)", key=key, type="primary"):
+        for rid in run_ids:
+            build_alignment(rid, dataset, "native", truth_ref)
+        st.rerun()
+
+
 def build_alignment(run_id: str, dataset: str, grid_name: str,
                     truth_ref: str = labels.IMPORTED) -> None:
     """Align one run against truth and cache it. Minutes of npz reads, once."""

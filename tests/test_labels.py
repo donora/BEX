@@ -321,3 +321,17 @@ def test_known_names_are_offered_most_used_first(store):
     L.close_chunk(ls, "r0", 0.0, 60.0, "Sam ")
     L.save_set(store, ls)
     assert L.known_names(store) == ["Mara", "Sam"]
+
+
+def test_sne_csv_with_ebird_codes_imports(store):
+    """SNE's own annotations.csv names species by eBird code ('Species eBird
+    Code'); the import used to match names only and refused every row."""
+    recs = recordings()
+    text = ("Filename,Start Time (s),End Time (s),Low Freq (Hz),High Freq (Hz),"
+            "Species eBird Code\nr1.flac,10,12,2000,4000,amerob\n")
+    lookup = L.species_lookup({ROBIN: "American Robin"}, {"amerob": ROBIN})
+    boxes, unmapped = L.read_annotation_file(text, "x.csv", recs, lookup)
+    assert unmapped == [] and boxes["species_key"].to_list() == [ROBIN]
+    _, unmapped = L.read_annotation_file(text, "x.csv", recs, L.species_lookup({ROBIN: ""}))
+    assert unmapped == ["amerob"] and L.looks_like_ebird_codes(unmapped)
+    assert not L.looks_like_ebird_codes(["American Robin", "Turdus migratorius"])

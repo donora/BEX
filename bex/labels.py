@@ -991,6 +991,28 @@ def read_annotation_file(text: str, filename: str, recordings: pl.DataFrame,
     return boxes.filter(pl.col("end_s") > pl.col("start_s")), sorted(unmapped)
 
 
+def species_lookup(names: dict[str, str], codes: dict[str, str] | None = None
+                   ) -> dict[str, str]:
+    """What an imported file may call a species -> its species_key: the key
+    itself, its common name (any case), or its eBird code. Names win over a
+    code that happens to spell the same."""
+    lookup: dict[str, str] = {}
+    for k, common in names.items():
+        lookup[k], lookup[k.lower()] = k, k
+        if common:
+            lookup[common.lower()] = k
+    for code, k in (codes or {}).items():
+        lookup.setdefault(code.lower(), k)
+    lookup[UNKNOWN_BIRD] = UNKNOWN_BIRD
+    return lookup
+
+
+def looks_like_ebird_codes(names: list[str]) -> bool:
+    """Mostly 4–6 lower-case letters (optionally a digit) — eBird's code shape."""
+    shaped = [n for n in names if re.fullmatch(r"[a-z]{4,6}\d?", n.strip())]
+    return bool(names) and len(shaped) >= 0.8 * len(names)
+
+
 def import_boxes(store_dir: str | Path, dataset: str, name: str, boxes: pl.DataFrame,
                  recordings: pl.DataFrame, exhaustive: bool, created_by: str) -> LabelSet:
     """A new set from imported boxes. Exhaustive: every chunk of every recording

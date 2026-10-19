@@ -391,3 +391,18 @@ def test_box_suggestions_rank_within_each_model_and_combine_by_rank():
     assert set(out["species_key"].head(2)) == {"Turdus merula", "Erithacus rubecula"}
     assert out["species_key"][2] == "Parus major"
     assert out.filter(pl.col("species_key") == "Parus major")["A score"][0] < 0.2
+
+
+def test_ebird_code_index_reads_profiles_and_species_list(tmp_path):
+    from bex.views import ebird_code_index
+    prof = tmp_path / "profiles" / "p"
+    prof.mkdir(parents=True)
+    (prof / "profile.toml").write_text('[profile]\ndisplay_name = "P"\n')
+    (prof / "tiers.csv").write_text("species_key,tier,ebird_code\nTurdus migratorius,1,AMEROB\n"
+                                    "Corvus corax,1,\n")
+    assert ebird_code_index(None, tmp_path / "profiles") == {"amerob": "Turdus migratorius"}
+    (tmp_path / "labels").mkdir()
+    (tmp_path / "labels" / "species.csv").write_text(
+        "Species eBird Code,Scientific Name,Common Name\ncomrav,Corvus corax,Common Raven\n")
+    got = ebird_code_index(tmp_path / "labels", tmp_path / "profiles")
+    assert got == {"amerob": "Turdus migratorius", "comrav": "Corvus corax"}

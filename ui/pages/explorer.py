@@ -25,6 +25,8 @@ def render(ctx) -> None:
     _, g = st.columns([6, 1])
     with g:
         guide.button("explorer")
+    if ctx.needs_align:
+        align_prompt(ctx.needs_align, ctx.dataset, ctx.truth_ref, key="ex_align")
     c1, c2 = st.columns([3, 1])
     rec_id = c1.selectbox("Recording", recordings["recording_id"].to_list(),
                           key="explorer_rec", persist_state="session")

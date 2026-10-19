@@ -412,6 +412,12 @@ def render() -> SimpleNamespace:
     resolved: dict[str, th.Resolved] = {}
     threshold_notes: list[str] = []
     borrowed: dict[str, str] = {}   # model label -> the labelled dataset it was fitted on
+    # Runs that could fit their rule here once aligned against the labels — a
+    # new labelled dataset starts this way, and used to draw nothing anywhere
+    # until Compare was opened.
+    needs_align: list[str] = []
+    complete_here = set(complete_runs(dataset)) if truth_ref and annotations is not None \
+        else set()
     for m in included:
         ident = ident_of[m.run_id]
         ov = {sp: t for (mi, sp), t in overrides.items() if mi == ident}
@@ -438,7 +444,10 @@ def render() -> SimpleNamespace:
                                             overrides=ov)
             borrowed[run_label[m.run_id]] = lend_ds
         else:
-            if rule_kind != "fixed" and fallback != "fixed":
+            # source is None (not FIT_HERE) while nothing is aligned yet.
+            if source != FROM_SET and rule_kind != "fixed" and m.run_id in complete_here:
+                needs_align.append(m.run_id)
+            elif rule_kind != "fixed" and fallback != "fixed":
                 threshold_notes.append(
                     f"**{run_label[m.run_id]}** has nothing to fit its rule on (no "
                     "ground truth, or not yet aligned against it) and no saved set — "
@@ -457,6 +466,8 @@ def render() -> SimpleNamespace:
             + ". Label this dataset to fit its own."))
 
     with st.sidebar:
+        if needs_align:
+            align_prompt(needs_align, dataset, truth_ref, key="sb_align")
         for note in threshold_notes:
             st.caption("⚠️ " + note)
         st.divider()

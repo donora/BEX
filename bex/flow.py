@@ -101,7 +101,14 @@ def progress(store_dir: str | Path, cache_dir: str | Path, name: str) -> dict:
                      .stat().st_mtime)
         ls = labels.load_set(store_dir, name, newest)
         closed = ls.chunks.filter(ls.chunks["state"] == labels.CLOSED)
-        if ls.sample.is_empty():
+        exhaustive = bool(ls.meta.get("imported", {}).get("exhaustive"))
+        if ls.sample.is_empty() and exhaustive and len(closed) and len(closed) == len(ls.chunks):
+            # An exhaustive import closes every chunk it covers and draws no
+            # sample: it is finished labelling, not a sample still to draw.
+            n_rec = closed["recording_id"].n_unique()
+            steps["labelled"] = ("done", f"{newest}: imported, {n_rec} recording(s) "
+                                         "fully labelled")
+        elif ls.sample.is_empty():
             steps["labelled"] = (("partial" if len(closed) else "todo"),
                                  f"{newest}: {len(closed)} chunk(s) closed, no sample drawn")
         else:

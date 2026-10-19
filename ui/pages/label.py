@@ -1066,19 +1066,19 @@ def import_form(ctx, labeller: str) -> None:
                  "false alarms until you close chunks yourself.")
         go = st.form_submit_button("Import")
     if go and up is not None:
-        lookup = {}
-        for k, common in names.items():
-            lookup[k], lookup[k.lower()] = k, k
-            if common:
-                lookup[common.lower()] = k
-        lookup[labels.UNKNOWN_BIRD] = labels.UNKNOWN_BIRD
+        lookup = labels.species_lookup(
+            names, views.ebird_code_index(cfg.labels_dir, cfg.profiles_dir))
         try:
             boxes, unmapped = labels.read_annotation_file(
                 up.getvalue().decode("utf-8", errors="replace"), up.name, recordings, lookup)
             if unmapped:
+                hint = (" They look like eBird codes: BEX reads codes from a profile's "
+                        "tiers.csv (an `ebird_code` column) or the species.csv in "
+                        "`labels_dir` — add them there, or use scientific names."
+                        if labels.looks_like_ebird_codes(unmapped) else "")
                 st.error(f"{len(unmapped)} name(s) match no species: "
                          + ", ".join(unmapped[:20]) + ". Fix them in the file and import "
-                         "again.")
+                         "again." + hint)
                 return
             labels.import_boxes(cfg.store_dir, dataset, name.strip(), boxes, recordings,
                                 exhaustive, labeller or "imported")
