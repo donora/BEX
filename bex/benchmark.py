@@ -398,8 +398,58 @@ def coverage(found_by_model: dict[str, set[str]], species: list[str]) -> dict[st
     return groups
 
 
-def summary(lab: pl.DataFrame, boxes: pl.DataFrame, hours: float) -> dict:
-    """The headline card's numbers for one model."""
+def chance_precision(lab: pl.DataFrame) -> float:
+    """The precision of reporting the same number of windows of each species, placed
+    at random. Wide windows contain a sound more often, so raw precision flatters
+    them; this is what a model of this window size gets for free."""
+    rates = lab.group_by("species_key").agg(
+        reported=pl.col("hit").sum(), rate=(pl.col("y_true") == 1).mean())
+    reported = int(rates["reported"].sum())
+    return float((rates["reported"] * rates["rate"]).sum() / reported) if reported else float("nan")
+
+
+def flagged_fraction(lab: pl.DataFrame, hours: float) -> float:
+    """The share of the audio inside at least one reported window, of any species."""
+    hits = lab.filter(pl.col("hit")).select("recording_id", "start_s", "end_s").unique()
+    if hours <= 0:
+        return float("nan")
+    covered = 0.0
+    for _, g in hits.sort("recording_id", "start_s").group_by("recording_id", maintain_order=True):
+        reach = None
+        for s, e in g.select("start_s", "end_s").iter_rows():
+            if reach is None or s > reach:
+                covered += e - s
+                reach = e
+            elif e > reach:
+                covered += e - reach
+                reach = e
+    # Padded windows can run past the end of a recording.
+    return min(1.0, covered / (hours * 3600))
+
+
+def per_second_precision(lab: pl.DataFrame, boxes: pl.DataFrame) -> float:
+    """Of the seconds a model claims for a species, how many hold a labelled sound of
+    it? A common timeline for every window size: a 15 s window claims all 15 seconds."""
+    claimed = right = 0
+    hits = lab.filter(pl.col("hit"))
+    for (rid, key), g in hits.group_by(["recording_id", "species_key"]):
+        n = int(np.ceil(g["end_s"].max())) + 1
+        says = np.zeros(n, dtype=bool)
+        for s, e in g.select("start_s", "end_s").iter_rows():
+            says[int(s):int(np.ceil(e))] = True
+        real = np.zeros(n, dtype=bool)
+        sounds = boxes.filter((pl.col("recording_id") == rid) & (pl.col("species_key") == key))
+        for s, e in sounds.select("start_s", "end_s").iter_rows():
+            real[int(s):min(n, int(np.ceil(e)))] = True
+        claimed += int(says.sum())
+        right += int((says & real).sum())
+    return right / claimed if claimed else float("nan")
+
+
+def summary(lab: pl.DataFrame, boxes: pl.DataFrame, hours: float,
+            annotations: pl.DataFrame | None = None) -> dict:
+    """The headline card's numbers for one model. `annotations` (with times, which
+    `boxes` does not carry) is needed only for the per-second figure."""
     rep = report_outcomes(lab)
     sing = singing_outcomes(boxes)
     reported = sum(rep.values())
@@ -413,4 +463,8 @@ def summary(lab: pl.DataFrame, boxes: pl.DataFrame, hours: float) -> dict:
         "found": (sing["found"] / sum(sing.values())) if sum(sing.values()) else float("nan"),
         "false_per_hour": false_detections_per_hour(lab, hours),
         "hours": hours,
+        "chance_precision": chance_precision(lab),
+        "flagged": flagged_fraction(lab, hours),
+        "per_second_precision": (per_second_precision(lab, annotations)
+                                 if annotations is not None else float("nan")),
     }

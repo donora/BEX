@@ -37,7 +37,7 @@ GUIDES: dict[str, list[tuple[str, str, str]]] = {
          "tick is done, a half circle under way, and the outlined step is next. "
          "Hover a step for detail."),
         (".st-key-card_0 [class*='st-key-h_']", "What to do next",
-         "*Continue* goes to the next step. *Label* and *Explore all recordings* "
+         "*Continue* goes to the next step. *Label* and *Explore* "
          "are always there."),
         (".st-key-g_add", "Your own recordings",
          "Add a folder of recordings: a name, a site, its location, and the "

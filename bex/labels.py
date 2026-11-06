@@ -594,6 +594,31 @@ def load_truth(store_dir: str | Path, dataset: str, ref: str) -> Truth | None:
     return truth_from_set(load_set(store_dir, dataset, name, version), recs, ref)
 
 
+def partial_boxes(store_dir: str | Path, dataset: str, ref: str,
+                  recording_id: str) -> pl.DataFrame:
+    """A set's boxes on one recording whatever the state of their chunks: what
+    people have marked, as opposed to `Truth`, which is only what can be scored.
+    Empty for no ref, for the imported set, and for a set that no longer exists."""
+    name, version = parse_ref(ref) if ref else (IMPORTED, None)
+    if name == IMPORTED or not set_dir(store_dir, dataset, name).exists():
+        return _empty(BOXES_SCHEMA)
+    boxes = load_set(store_dir, dataset, name, version).boxes
+    return boxes.filter(pl.col("recording_id") == recording_id).sort("start_s")
+
+
+def all_boxes(store_dir: str | Path, dataset: str, ref: str) -> pl.DataFrame | None:
+    """Every box a ref holds, on any recording and in any chunk. None for no ref."""
+    if not ref:
+        return None
+    name, version = parse_ref(ref)
+    if name == IMPORTED:
+        from .ingest import read_dataset
+        return read_dataset(store_dir, dataset)[1]
+    if not set_dir(store_dir, dataset, name).exists():
+        return None
+    return load_set(store_dir, dataset, name, version).boxes
+
+
 def within(df: pl.DataFrame, coverage: pl.DataFrame) -> pl.DataFrame:
     """Rows (recording_id, start_s, end_s) lying wholly inside the covered time.
 

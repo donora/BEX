@@ -66,10 +66,11 @@ def test_species_palette_fixed_order_and_other():
     frames = [det_rows(*[(3.0 * i, f"Species {chr(97 + i)}", 0.5, 0.5, False)
                          for i in range(10)])]
     # Species a..j, one block each -> ties broken alphabetically; first 8 get
-    # categorical slots in order, the rest are Other.
+    # categorical slots in order, the rest get further colours of their own.
     pal = species_palette(*frames)
     assert [pal[f"Species {c}"] for c in "abcdefgh"] == CATEGORICAL
-    assert pal["Species i"] == pal["Species j"] == OTHER_COLOR
+    assert pal["Species i"] != pal["Species j"]
+    assert OTHER_COLOR not in pal.values()
 
 
 def test_window_table_columns():
@@ -287,10 +288,10 @@ def test_palette_colours_annotated_species_first():
     loud = pl.DataFrame({"species_key": [f"loud{i}" for i in range(9) for _ in range(5)]})
     ann = pl.DataFrame({"species_key": ["quiet"]})
     by_detections = species_palette(loud, pl.DataFrame({"species_key": ["quiet"]}))
-    assert by_detections["quiet"] == OTHER_COLOR           # the old failure
+    assert by_detections["quiet"] not in CATEGORICAL       # the old failure
     pal = species_palette(loud, priority=ann)
     assert pal["quiet"] == CATEGORICAL[0]
-    assert sum(1 for v in pal.values() if v != OTHER_COLOR) == len(CATEGORICAL)
+    assert sum(1 for v in pal.values() if v in CATEGORICAL) == len(CATEGORICAL)
 
 
 def test_navigator_acts_on_the_chart_that_was_clicked():
@@ -406,3 +407,107 @@ def test_ebird_code_index_reads_profiles_and_species_list(tmp_path):
         "Species eBird Code,Scientific Name,Common Name\ncomrav,Corvus corax,Common Raven\n")
     got = ebird_code_index(tmp_path / "labels", tmp_path / "profiles")
     assert got == {"amerob": "Turdus migratorius", "comrav": "Corvus corax"}
+
+
+def test_khz_ticks_stay_inside_the_displayed_band():
+    from bex.views import khz_ticks
+
+    assert khz_ticks({"fmin": 60.0, "fmax": 5000.0, "sr": 48000}) == [0.1, 0.2, 0.5, 1, 2, 4]
+    assert khz_ticks({"fmin": 150.0, "fmax": 14000.0, "sr": 16000}) == [0.2, 0.5, 1, 2, 4]
+
+
+def test_score_runs_split_on_gaps_and_by_species():
+    from bex.views import score_runs
+
+    marks = pl.DataFrame({"start_s": [0.0, 1.0, 2.0, 5.0, 1.0],
+                          "end_s": [5.0, 6.0, 7.0, 10.0, 6.0],
+                          "species_key": ["a", "a", "a", "a", "b"],
+                          "strength": [0.1, 0.2, 0.3, 0.4, 0.5]})
+    runs = score_runs(marks, hop_s=1.0)
+    assert sorted(len(r) for r in runs) == [1, 1, 3]
+    a = next(r for r in runs if len(r) == 3)
+    assert a["center_s"].to_list() == [2.5, 3.5, 4.5]
+    assert score_runs(marks.clear(), 1.0) == []
+
+
+def test_a_run_is_right_when_a_sound_falls_within_its_reach():
+    from bex.views import run_correct, run_reach, score_runs
+
+    # Windows of 1.5 s every 0.5 s, centres 0.75 to 1.75, so it can hear 0 to 2.5.
+    marks = pl.DataFrame({"start_s": [0.0, 0.5, 1.0], "end_s": [1.5, 2.0, 2.5],
+                          "species_key": ["a"] * 3, "strength": [0.1, 0.2, 0.3]})
+    run = score_runs(marks, hop_s=0.5)[0]
+    assert run_reach(run, 0.5) == (-0.25, 2.75)
+
+    def ann(start, end, key="a"):
+        return pl.DataFrame({"recording_id": ["r"], "species_key": [key],
+                             "start_s": [start], "end_s": [end]})
+
+    assert run_correct(run, ann(2.2, 2.4), "r", 0.5) is True      # after the last centre
+    assert run_correct(run, ann(2.6, 2.7), "r", 0.5) is True      # within half a hop
+    assert run_correct(run, ann(3.0, 3.2), "r", 0.5) is False     # beyond its reach
+    assert run_correct(run, ann(1.0, 1.2, "b"), "r", 0.5) is False  # another species
+    assert run_correct(run, None, "r", 0.5) is None
+
+
+def _boxes(*rows):
+    return pl.DataFrame(rows, schema=["species_key", "labelled_at"], orient="row")
+
+
+def test_label_palette_holds_when_a_new_species_is_labelled():
+    from bex.views import CATEGORICAL, label_palette
+
+    before = label_palette(_boxes(("a", "1"), ("b", "2"), ("a", "3")))
+    after = label_palette(_boxes(("a", "1"), ("b", "2"), ("a", "3"), ("c", "4"), ("c", "5"), ("c", "6")))
+    assert before == {"a": CATEGORICAL[0], "b": CATEGORICAL[1]}
+    assert after == {**before, "c": CATEGORICAL[2]}
+
+
+def test_label_palette_ties_go_by_count_and_project_order_comes_first():
+    from bex.views import CATEGORICAL, label_palette
+
+    imported = _boxes(("rare", "1"), ("common", "1"), ("common", "1"))
+    assert label_palette(imported)["common"] == CATEGORICAL[0]
+    pal = label_palette(imported, first=("chosen", "rare"))
+    assert pal["chosen"] == CATEGORICAL[0] and pal["rare"] == CATEGORICAL[1]
+    assert pal["common"] == CATEGORICAL[2]
+    assert "skipped" not in label_palette(_boxes(("skipped", "1")), skip=("skipped",))
+
+
+def test_label_palette_never_runs_out_and_needs_no_timestamps():
+    from bex.views import OTHER_COLOR, label_palette
+
+    frame = pl.DataFrame({"species_key": [f"s{i}" for i in range(60)]})
+    pal = label_palette(frame)
+    assert len(set(pal.values())) == 60 and OTHER_COLOR not in pal.values()
+    assert label_palette(None) == {}
+
+
+def test_more_colours_never_move_the_ones_before_them():
+    from bex.views import CATEGORICAL, needs_name, species_colour
+
+    assert [species_colour(i) for i in range(8)] == CATEGORICAL
+    assert not needs_name(species_colour(7)) and needs_name(species_colour(8))
+    assert species_colour(20) == species_colour(20)
+
+
+def test_each_new_colour_is_chosen_far_from_the_ones_before():
+    from bex.views import _oklab, species_colour
+
+    def nearest(i):
+        return min(np.linalg.norm(_oklab(species_colour(i)) - _oklab(species_colour(j)))
+                   for j in range(i))
+
+    # Greedy farthest-point: the gap to the nearest earlier colour only ever shrinks
+    # slowly, and stays visible for a realistic number of species.
+    assert min(nearest(i) for i in range(8, 24)) > 0.05
+
+
+def test_species_palette_keeps_fixed_colours_and_shares_out_the_rest():
+    from bex.views import CATEGORICAL, species_palette
+
+    fixed = {"labelled": CATEGORICAL[3]}
+    det = pl.DataFrame({"species_key": ["labelled", "model-only", "model-only"]})
+    pal = species_palette(det, fixed=fixed)
+    assert pal["labelled"] == CATEGORICAL[3]
+    assert pal["model-only"] == CATEGORICAL[0]

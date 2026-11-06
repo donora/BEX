@@ -116,8 +116,13 @@ def render(ctx) -> None:
             s, ps = B[m]["summary"], B[m]["per_species"]
             with col.container(border=True):
                 st.markdown(f"**{m}**")
+                if not sum(s["report"].values()):
+                    st.caption("Reports none of the labelled species at this threshold, so "
+                               "there is nothing to score here. The Explorer shows what "
+                               "it found.")
+                    continue
                 rep_total = sum(s["report"].values()) or 1
-                st.caption("When it reports a bird")
+                st.caption(f"When it reports a {word('bird')}")
                 st.altair_chart(outcome_bar({k: v / rep_total for k, v in s["report"].items()},
                                             list(benchmark.REPORT_OUTCOMES)), width="stretch")
                 iv = B[m]["intervals"]
@@ -126,14 +131,25 @@ def render(ctx) -> None:
                             f"{ci(*iv['false_per_hour'], '{:.0f}')} "
                             f"{term('false_per_hour')} of audio",
                             unsafe_allow_html=True)
+                chance = s["chance_precision"]
+                if chance > 0:
+                    st.markdown(
+                        f"**{s['precision'] / chance:.1f}×** better than chance "
+                        f"({chance:.0%}) · flags **{s['flagged']:.0%}** of the audio · "
+                        f"**{s['per_second_precision']:.0%}** precise per second",
+                        help="Chance: reporting as many windows of each species at random. "
+                             "Wide windows contain a sound more often, so they get more for "
+                             "free. Per second: of the seconds it claims, the share holding "
+                             "a labelled sound of that species, which puts every window size "
+                             "on one timeline.")
                 sing_total = sum(s["singing"].values()) or 1
-                st.caption("When a bird is singing")
+                st.caption(word("When a bird is singing"))
                 st.altair_chart(outcome_bar(
                     {("correct" if k == "found" else k): v / sing_total
                      for k, v in s["singing"].items()},
                     ["correct", "filter hid a real bird", "missed"]), width="stretch")
                 st.markdown(f"Finds **{s['found']:.0%}**{ci(*iv['found'])} of "
-                            f"{term('songs_found', 'songs')}", unsafe_allow_html=True)
+                            f"{term('songs_found', word('songs'))}", unsafe_allow_html=True)
 
                 ranked = ps.filter((pl.col("n_positive") >= min_labelled)
                                    & pl.col("found").is_not_null())
@@ -221,7 +237,8 @@ def render(ctx) -> None:
         "<div style='font-size:0.9rem'>At " + spec.label + ": " + " &nbsp;·&nbsp; ".join(
             f"<span style='color:{colour[m]}'>●</span> <b>{m}</b> precision "
             f"<b>{B[m]['summary']['precision']:.0%}</b>, recall "
-            f"<b>{B[m]['summary']['window_recall']:.0%}</b>" for m in order)
+            f"<b>{B[m]['summary']['window_recall']:.0%}</b>" for m in order
+            if sum(B[m]["summary"]["report"].values()))
         + "</div>", unsafe_allow_html=True)
 
     # ---- 3 · species lists: what each model would say was in a recording ------ #
@@ -317,7 +334,8 @@ def render(ctx) -> None:
                     f"<span style='color:{colour[m]}'>●</span> <b>{m}</b> lists "
                     f"<b>{L[m][1]['listed_per_recording']:.1f}</b> species per recording: "
                     f"names <b>{L[m][1]['recall']:.0%}</b> of the species there, and "
-                    f"<b>{L[m][1]['precision']:.0%}</b> of what it lists was there"
+                    + (f"<b>{L[m][1]['precision']:.0%}</b>" if L[m][1]['precision'] == L[m][1]['precision']
+                     else "<b>none</b>") + " of what it lists was there"
                     for m in order) + "</div>", unsafe_allow_html=True)
 
     # One recording, species by species: the list each model would hand you.

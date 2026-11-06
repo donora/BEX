@@ -1,5 +1,7 @@
 """BEX · Explorer."""
 from ui.common import *  # noqa: F403 — the shared app toolkit
+import textwrap
+
 from ui import guide, sidebar
 
 
@@ -37,12 +39,29 @@ def render(ctx) -> None:
     # Right and wrong need the whole recording labelled: a detection in a chunk
     # nobody has closed is not wrong, just not yet judged.
     t_obj = ctx.truth_obj
+    # Labels nobody has finished: in the unscored view, the dataset's newest set.
+    partial = pl.DataFrame()
+    if t_obj is None or rec_id not in t_obj.complete:
+        choice = sidebar.default_labels(dataset, sidebar.label_options(dataset))
+        partial_ref = ctx.truth_ref or (sidebar.resolve_truth(dataset, choice) if choice else "")
+        partial = labels.partial_boxes(cfg.store_dir, dataset, partial_ref, rec_id)
+    # Colour comes from the whole label set, so it holds across windows and recordings.
+    colour_choice = sidebar.default_labels(dataset, sidebar.label_options(dataset))
+    colour_ref = ctx.truth_ref or (sidebar.resolve_truth(dataset, colour_choice)
+                                   if colour_choice else "")
+    fixed_colours = views.label_palette(labels.all_boxes(cfg.store_dir, dataset, colour_ref),
+                                        cfg.species_first, skip=(labels.UNKNOWN_BIRD,))
+    if t_obj is None and len(partial):
+        st.caption(f"Dashed boxes are {labels.describe_ref(partial_ref)}'s {len(partial)} "
+                   "labels: sounds someone marked, not a complete list.")
     if t_obj is not None and rec_id not in t_obj.complete:
         done = t_obj.covered_s.get(rec_id, 0.0)
         st.caption(f"ℹ️ This recording is {'partly labelled' if done else 'not labelled'} "
                    f"in *{t_obj.label}* ({done / 60:.0f} of {duration / 60:.0f} min "
                    "closed), so it is shown unscored: what each model reported, "
-                   "with no right or wrong.")
+                   "with no right or wrong."
+                   + (f" Dashed boxes are this set's {len(partial)} labels: sounds "
+                      "someone marked, not a complete list." if len(partial) else ""))
         annotations = None
 
     # Every included run that has scored THIS recording — a run that has not
@@ -108,7 +127,7 @@ def render(ctx) -> None:
     labelled = annotations is not None
     up_outcomes = list(views.OUTCOMES if labelled else views.UNLABELLED_OUTCOMES)
     heading(
-        "Where the birdsong is"
+        f"Where the {word('birdsong')} is"
         + (f" — **{name_of(focus_key)}** only" if focus_key else ""),
         "The whole recording, one chart per model, counted in **species** per time "
         "slot (not windows — a 3 s model produces more windows than a 5 s one for "
@@ -301,8 +320,9 @@ def render(ctx) -> None:
         *[det.filter((pl.col("recording_id") == rec_id) & pl.col("above"))
           for det in det_by_model.values()],
         priority=(annotations.filter(pl.col("recording_id") == rec_id)
-                  if annotations is not None else None))
-    if focus_key and palette.get(focus_key, views.OTHER_COLOR) == views.OTHER_COLOR:
+                  if annotations is not None else partial),
+        fixed=fixed_colours)
+    if focus_key and focus_key not in palette:
         palette[focus_key] = views.CATEGORICAL[0]
 
     try:
@@ -334,7 +354,10 @@ def render(ctx) -> None:
         vmin, vmax = display_range(s)
         ax_spec.imshow(s, origin="lower", aspect="auto", cmap="magma",
                        extent=[t0, t1, 0, n_rows], vmin=vmin, vmax=vmax)
-        ax_spec.set_ylabel("mel band")
+        khz = views.khz_ticks(meta)
+        ax_spec.set_yticks([views.hz_to_mel_row(k * 1000, meta) for k in khz],
+                           [f"{k:g}" for k in khz])
+        ax_spec.set_ylabel("kHz")
     else:
         ax_spec.text(0.5, 0.5, "no spectrogram cache", transform=ax_spec.transAxes,
                      ha="center", color="#9a9992")
@@ -362,6 +385,22 @@ def render(ctx) -> None:
         if (b["species_key"], b["start_s"]) in truth_anchor:
             label(ax_spec, x0 + 0.15, min(hi + 1.5, n_rows - 8),
                   name_of(b["species_key"]), color)
+
+    # Partial labels: dashed, because no box here does not mean no sound.
+    shown_partial = views.truth_blocks(partial, rec_id, t0, t1) if len(partial) else partial
+    if focus_key and len(shown_partial):
+        shown_partial = shown_partial.filter(pl.col("species_key") == focus_key)
+    for b in shown_partial.to_dicts():
+        x0, x1 = max(b["start_s"], t0), min(b["end_s"], t1)
+        lo = views.hz_to_mel_row(b["low_hz"], meta) if have_mel and np.isfinite(b["low_hz"]) else 0
+        hi = views.hz_to_mel_row(b["high_hz"], meta) if have_mel and np.isfinite(b["high_hz"]) else n_rows
+        color = palette.get(b["species_key"], views.OTHER_COLOR)
+        ax_spec.add_patch(plt.Rectangle((x0, lo), x1 - x0, hi - lo, fill=False,
+                                        edgecolor=color, linewidth=1.4, linestyle="--"))
+        ax_spec.text(x0, n_rows * 0.985, name_of(b["species_key"]), fontsize=7, color="#ffffff",
+                     rotation=90, va="top", ha="right", zorder=6, clip_on=True,
+                     bbox=dict(boxstyle="round,pad=0.15", facecolor=color,
+                               edgecolor="none", alpha=0.9))
 
     # A focus species' detections, shaded through the spectrogram, with one row
     # per model in a strip along the top (in lane order) so two models' claims
@@ -403,8 +442,8 @@ def render(ctx) -> None:
     WRONG_MARK, HIDDEN_MARK = "#d0021b", "#f2b705"
 
     def grey_label(ax, x, y, key, va="bottom"):
-        """Name a grey mark where it is drawn — past the eight colours a species
-        has no colour of its own, so without this it would be anonymous."""
+        """Name a mark where it is drawn: past the eight main colours, species are
+        too alike to identify from the key alone."""
         ax.text(x, y, name_of(key), fontsize=6, color="#3a3a35", va=va, ha="left",
                 zorder=7, clip_on=True,
                 bbox=dict(boxstyle="round,pad=0.12", facecolor="#ffffffc8",
@@ -441,12 +480,13 @@ def render(ctx) -> None:
                 if focus_key and b["species_key"] != focus_key:
                     color = "#dedcd3"
                 x0, x1 = max(b["start_s"], t0), min(b["end_s"], t1)
-                gap = 0.004 * span_s
+                # A short box must not vanish: the gap shrinks with it, with a minimum width.
+                gap = min(0.004 * span_s, 0.2 * (x1 - x0))
                 ax.add_patch(plt.Rectangle((x0 + gap, 0.12 + b["row"] * h),
-                                           max(0, x1 - x0 - 2 * gap), h * 0.88,
+                                           max(0.002 * span_s, x1 - x0 - 2 * gap), h * 0.88,
                                            facecolor=color, linewidth=0))
                 # Once per species per view: truth boxes are long and many.
-                if color == views.OTHER_COLOR and b["species_key"] not in named:
+                if views.needs_name(color) and b["species_key"] not in named:
                     named.add(b["species_key"])
                     grey_label(ax, x0 + gap, 0.12 + b["row"] * h + h * 0.44,
                                b["species_key"], va="center")
@@ -457,7 +497,9 @@ def render(ctx) -> None:
         ax = lane_axes[lane_i]
         lane_i += 1
         ax.set_ylim(0, 1.12)   # headroom for the ✕ / ⚠ marks above the top lines
-        ax.set_ylabel(f"{mlabel}\n{m.window_s:g} s windows", rotation=0, ha="right",
+        overlapped = m.hop_s < m.window_s - 1e-6
+        ax.set_ylabel(f"{textwrap.fill(mlabel, 20)}\n{m.window_s:.3g} s windows"
+                      + ("\n(line at centre)" if overlapped else ""), rotation=0, ha="right",
                       va="center", fontsize=8.5)
         # Everything below the baseline is "under threshold" — never drawn here.
         ax.axhspan(0, th.LANE_BASELINE, facecolor="#00000012", edgecolor="none")
@@ -475,12 +517,39 @@ def render(ctx) -> None:
         marks = views.lane_lines(det_by_model[mlabel], rec_id, t0, t1, annotations)
         firsts = run_starts(marks) if not marks.is_empty() else set()
         gap = 0.006 * span_s
-        for b in marks.to_dicts():
+        for run in views.score_runs(marks, m.hop_s) if overlapped else []:
+            b = run.row(0, named=True)
+            color = palette.get(b["species_key"], views.OTHER_COLOR)
+            on_focus = not focus_key or b["species_key"] == focus_key
+            if not on_focus:
+                color = "#dedcd3"
+            ax.plot(run["center_s"], run["strength"], color=color, linewidth=1.8,
+                    marker="o" if len(run) == 1 else None, markersize=3,
+                    linestyle=(0, (2, 1.2)) if b["implausible"] else "-",
+                    zorder=3 if on_focus else 2)
+            # Thin tails: how far this prediction could have heard.
+            reach_lo, reach_hi = views.run_reach(run, m.hop_s)
+            end = run.row(-1, named=True)
+            if not b["implausible"]:
+                ax.plot([reach_lo, b["center_s"]], [b["strength"]] * 2, color=color,
+                        linewidth=0.8, alpha=0.5, zorder=1)
+                ax.plot([end["center_s"], reach_hi], [end["strength"]] * 2, color=color,
+                        linewidth=0.8, alpha=0.5, zorder=1)
+            if (on_focus and not b["implausible"]
+                    and views.run_correct(run, annotations, rec_id, m.hop_s) is False):
+                ax.plot(b["center_s"], b["strength"] + 0.075, marker="X", markersize=8,
+                        color=WRONG_MARK, markeredgecolor="#ffffff", markeredgewidth=0.7, zorder=6)
+            if on_focus and views.needs_name(color):
+                grey_label(ax, b["center_s"], b["strength"] + 0.03, b["species_key"])
+        for b in [] if overlapped else marks.to_dicts():
             color = palette.get(b["species_key"], views.OTHER_COLOR)
             if focus_key and b["species_key"] != focus_key:
                 color = "#dedcd3"
-            x0, x1 = max(b["start_s"], t0) + gap, min(b["end_s"], t1) - gap
-            ax.hlines(b["strength"], x0, max(x0, x1), colors=color, linewidth=2.4,
+            # A window can be narrower than the gap (a 0.1 s window in a 60 s view),
+            # so the gap shrinks with it and every mark keeps a visible width.
+            inset = min(gap, 0.2 * (b["end_s"] - b["start_s"]))
+            x0, x1 = max(b["start_s"], t0) + inset, min(b["end_s"], t1) - inset
+            ax.hlines(b["strength"], x0, max(x1, x0 + 0.0015 * span_s), colors=color, linewidth=2.4,
                       linestyles=(0, (2, 1.2)) if b["implausible"] else "solid",
                       zorder=3 if not focus_key or b["species_key"] == focus_key else 2)
             # Colour says which species; a symbol at the line's top left says
@@ -501,7 +570,7 @@ def render(ctx) -> None:
                             markeredgecolor="#1d1b17", markeredgewidth=0.7, zorder=6)
                     ax.text(mx, my - 0.012, "!", fontsize=5.5, fontweight="bold",
                             color="#1d1b17", ha="center", va="center", zorder=7)
-            if color == views.OTHER_COLOR and (b["species_key"], b["start_s"]) in firsts:
+            if views.needs_name(color) and (b["species_key"], b["start_s"]) in firsts:
                 grey_label(ax, x0 + (0.016 * span_s if mark else 0),
                            b["strength"] + 0.03, b["species_key"])
 
@@ -545,6 +614,7 @@ def render(ctx) -> None:
         [k for v, h in lanes.values()
          for k in v["species_key"].to_list() + h["species_key"].to_list()]
         + (truth_lane["species_key"].to_list() if not truth_lane.is_empty() else [])
+        + (shown_partial["species_key"].to_list() if len(shown_partial) else [])
     )
     if annotations is not None:
         st.markdown(
@@ -556,14 +626,15 @@ def render(ctx) -> None:
             "</div>", unsafe_allow_html=True)
     k1, k2 = st.columns([0.92, 0.08], vertical_alignment="top")
     if in_view:
-        order = list(views.CATEGORICAL) + [views.OTHER_COLOR]
+        order = {c: i for i, c in enumerate(dict.fromkeys(palette.values()))}
         chips = [
             f'<span style="white-space:nowrap"><span style="color:'
             f'{palette.get(k, views.OTHER_COLOR)}">■</span> '
-            f'<a href="{xc_species_url(k)}" target="_blank" title="{k} on Xeno-Canto">'
-            f'{name_of(k)}</a></span>'
+            + (f'<a href="{xc_species_url(k)}" target="_blank" title="{k} on Xeno-Canto">'
+               f'{name_of(k)}</a>' if cfg.xc_links else name_of(k))
+            + '</span>'
             for k in sorted(in_view, key=lambda k: (
-                order.index(palette.get(k, views.OTHER_COLOR)), name_of(k)))
+                order.get(palette.get(k), len(order)), name_of(k)))
         ]
         k1.markdown(" &nbsp; ".join(chips), unsafe_allow_html=True)
     with k2.popover("ⓘ", width="stretch"):
@@ -584,6 +655,11 @@ def render(ctx) -> None:
             "inspector, and **the same height in two lanes does not mean the two "
             "models were equally sure**, because their scores are not comparable.\n"
             "- **Dashed lines** are implausible under the sidebar's judge.\n"
+            "- **A line with thin tails** is one prediction from overlapping windows, "
+            "drawn at the window centres. The tails show how far it could have heard: "
+            "half a window and half a hop. It counts as right, with no ✕, if a labelled "
+            "sound of that species falls anywhere in that reach, so a long line can be "
+            "right from one sound.\n"
             "- **✕** (red cross) marks a wrong detection: the species is not "
             "annotated at that time, even if it is annotated elsewhere in the "
             "recording. **⚠** marks a real, annotated bird the filter would hide. "
@@ -598,6 +674,9 @@ def render(ctx) -> None:
             + ("Thresholds here were fitted on these same recordings, which "
                "flatters every model — see the Thresholds page." if fitted_here
                else ""))
+
+    # Below the species key, so the key stays next to the figure it explains.
+    project_panel(dataset, rec_id, inspect_t, "explorer")
 
     # ---- window inspector, across every model ------------------------------ #
     heading(

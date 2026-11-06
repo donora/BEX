@@ -325,7 +325,10 @@ def detection_overview(
             "detection_rate": (t["detected"] / askable
                                if reachable and askable else None),
         })
-    return pl.DataFrame(rows).sort("detection_rate", descending=True, nulls_last=True)
+    # Typed: a model with nothing scorable has only None here, which polars would read
+    # as a null column that cannot be stacked with another model's numbers.
+    return (pl.DataFrame(rows, schema_overrides={"detection_rate": pl.Float64})
+            .sort("detection_rate", descending=True, nulls_last=True))
 
 
 def species_index(aligned: pl.DataFrame, annotations: pl.DataFrame) -> pl.DataFrame:

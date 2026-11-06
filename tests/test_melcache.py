@@ -83,3 +83,24 @@ def test_build_cache_resumable(tone_wav, tmp_path):
     assert build_cache(cache, "d", recordings, root, limit=1) == 1
     assert build_cache(cache, "d", recordings, root) == 1  # only the missing one
     assert build_cache(cache, "d", recordings, root) == 0  # idempotent
+
+
+def test_display_params_apply_overrides_and_reject_typos():
+    from bex.melcache import DISPLAY_MEL, display_params
+
+    assert display_params() == DISPLAY_MEL
+    assert display_params({"fmin": 60}).fmin == 60
+    with pytest.raises(ValueError, match="fmn"):
+        display_params({"fmn": 60})
+
+
+def test_changing_display_settings_rebuilds_the_cache_entry(tone_wav, tmp_path):
+    from bex import repair
+    from bex.melcache import is_current, display_params, mel_path
+
+    args = (tmp_path, tmp_path, "d", "tone", tone_wav.name, tone_wav.parent)
+    assert repair.build_mel(*args) == "built"
+    assert repair.build_mel(*args) == "cached"
+    assert repair.build_mel(*args, {"fmax": 5000}) == "built"
+    assert is_current(mel_path(tmp_path, "d", "tone"), display_params({"fmax": 5000}))
+    assert repair.build_mel(*args, {"fmax": 5000}) == "cached"

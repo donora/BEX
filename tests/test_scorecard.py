@@ -328,3 +328,17 @@ def test_overview_counts_boxes_recordings_and_unaskable_ones():
 def test_overview_of_nothing():
     from bex.scorecard import detection_overview
     assert detection_overview(aligned((0, 0, 0.1)), boxes(), {}).is_empty()
+
+
+def test_a_model_with_nothing_scorable_can_be_stacked_with_any_other():
+    """Its rates are all None, which used to make a null column that broke pl.concat."""
+    from bex.scorecard import detection_overview
+
+    ann = pl.DataFrame({"recording_id": ["r"], "species_key": ["a"], "start_s": [1.0],
+                        "end_s": [2.0], "low_hz": [float("nan")], "high_hz": [float("nan")]})
+    det = pl.DataFrame({"recording_id": ["r"], "species_key": ["a"], "start_s": [0.0],
+                        "end_s": [5.0], "score": [0.9], "y_true": [1]})
+    silent = detection_overview(det, ann, {})                # no θ for it: not reachable
+    scored = detection_overview(det, ann, {"a": 0.5})
+    assert silent["detection_rate"].dtype == pl.Float64
+    assert pl.concat([silent, scored])["detection_rate"].to_list()[1] == 1.0

@@ -40,3 +40,18 @@ def test_init_writes_a_config_that_loads_and_never_overwrites(tmp_path):
     before = (tmp_path / "bex.toml").read_text()
     assert main(["init", str(tmp_path)]) == 1
     assert (tmp_path / "bex.toml").read_text() == before
+
+
+def test_scan_records_a_relative_folder_as_absolute(tmp_path, monkeypatch):
+    """Runners start in their own folder, so a relative audio root would not resolve."""
+    from bex import ingest
+
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    sf.write(audio / "a.wav", np.zeros(8000), 8000)
+    cfg = tmp_path / "bex.toml"
+    cfg.write_text('[paths]\nstore_dir = "store"\n')
+    monkeypatch.chdir(tmp_path)
+    assert main(["--config", str(cfg), "scan", "audio", "--name", "d"]) == 0
+    monkeypatch.chdir(audio)
+    assert ingest.dataset_audio_root(tmp_path / "store", "d") == audio

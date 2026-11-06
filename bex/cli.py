@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -96,7 +97,10 @@ def main(argv: list[str] | None = None) -> int:
 
     elif args.command == "scan":
         recordings = ingest.scan_folder(args.dir, site=args.site, lat=args.lat, lon=args.lon)
-        d = ingest.write_dataset(cfg.store_dir, args.name, recordings, audio_root=args.dir)
+        # abspath, not resolve(): a symlink to an external drive must stay a symlink.
+        # Runners start in their own folder, so a relative root would not resolve.
+        d = ingest.write_dataset(cfg.store_dir, args.name, recordings,
+                                 audio_root=os.path.abspath(args.dir))
         hours = recordings["duration_s"].sum() / 3600
         print(f"{args.name}: {len(recordings)} recordings, {hours:.1f} h -> {d}")
 
@@ -110,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
                 break
             # Repairs a file libsndfile cannot decode, then builds from the copy.
             what = repair.build_mel(cfg.cache_dir, cfg.store_dir, args.dataset, rid, rel,
-                                    audio_root)
+                                    audio_root, cfg.display)
             if what != "cached":
                 n += 1
                 print(f"{rid}: {what}")
@@ -136,7 +140,6 @@ def main(argv: list[str] | None = None) -> int:
               f"{len(recordings) - fixed - skipped} healthy")
 
     elif args.command == "app":
-        import os
         import subprocess
 
         # Installed: the app ships inside the package (bex/webapp). In a clone
@@ -163,7 +166,8 @@ def main(argv: list[str] | None = None) -> int:
             p = labels.progress(ls, recordings)
             vs = labels.versions(cfg.store_dir, args.dataset, name)
             print(f"{name}: {p['minutes']:.0f} min closed in {p['recordings']} recordings, "
-                  f"{p['boxes']} boxes of {p['n_species']} species; sample "
+                  f"{p['boxes']} of {p['all_boxes']} boxes in closed chunks, "
+                  f"{p['n_species']} species; sample "
                   f"{p['sample_closed']}/{p['sample_size']}; versions "
                   f"{', '.join(f'v{v}' for v in vs) or 'none'}")
 

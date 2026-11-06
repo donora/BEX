@@ -36,7 +36,7 @@ report everywhere, with no right or wrong).
 4. **Its progress** through the same steps: *Add → Run models → Label →
    Explore → Analyse → Survey protocol → Apply*. A tick is done, a half circle
    under way; the outlined step is the next one. Hover a step for detail.
-5. **Continue** goes to the next step. *Label* and *Explore all recordings* are
+5. **Continue** goes to the next step. *Label* and *Explore* are
    always there: neither closes off the other.
 6. **A dataset part-way through labelling**: three recordings started (green
    outline), a few minutes in each.

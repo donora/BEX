@@ -65,13 +65,33 @@ def resolve_truth(dataset: str, choice: str) -> str:
     return choice
 
 
+def _chosen_key(dataset: str) -> str:
+    return f"_view_chosen_{dataset}"
+
+
+def _mark_chosen(dataset: str) -> None:
+    st.session_state[_chosen_key(dataset)] = True
+
+
+def can_score(dataset: str) -> bool:
+    """Is there anything to score against? Boxes in open chunks are not: a set
+    imported as partial would open on a scored view of nothing."""
+    choice = default_labels(dataset, label_options(dataset))
+    if choice is None:
+        return False
+    name, _ = labels.parse_ref(choice)
+    return name == labels.IMPORTED or bool(
+        len(labels.load_set(cfg.store_dir, dataset, name).chunks
+            .filter(pl.col("state") == labels.CLOSED)))
+
+
 def current_view(dataset: str) -> str:
-    """The dataset's view: labelled data when it has labels and nobody chose
-    otherwise; all recordings when it has none (or someone switched)."""
-    has = bool(label_options(dataset))
+    """The dataset's view: labelled data when it has closed labels, all recordings
+    when it has none. It follows the labels, so closing the first chunk changes it,
+    until someone picks a view, which then holds for the session."""
     v = st.session_state.get(view_key(dataset))
-    if v not in (VIEW_LABELLED, VIEW_ALL):
-        v = VIEW_LABELLED if has else VIEW_ALL
+    if v not in (VIEW_LABELLED, VIEW_ALL) or not st.session_state.get(_chosen_key(dataset)):
+        v = VIEW_LABELLED if can_score(dataset) else VIEW_ALL
         st.session_state[view_key(dataset)] = v
     return v
 
@@ -80,6 +100,7 @@ def set_view(dataset: str, view: str) -> None:
     """For buttons elsewhere (top bar, Home, page lines): switch, before the
     sidebar's widget is drawn this run."""
     st.session_state[view_key(dataset)] = view
+    _mark_chosen(dataset)
 
 
 def truth_choice(dataset: str) -> str:
@@ -90,6 +111,7 @@ def truth_choice(dataset: str) -> str:
     view = current_view(dataset)
     view = st.segmented_control(
         "Looking at", [VIEW_LABELLED, VIEW_ALL], key=view_key(dataset),
+        on_change=_mark_chosen, args=(dataset,),
         persist_state="session", width="stretch",
         help="Labelled data, scored: only what has been labelled, with every "
              "number judged against the labels. All recordings, unscored: every "
@@ -159,7 +181,7 @@ def status_panel(dataset: str, recordings: pl.DataFrame, ref: str,
                          f"site{'s' * (lab_sites != 1)}"
                          + (f"; {len(t.complete)} recording(s) end to end"
                             if t.complete else ""))
-        lines.append(f"{len(t.annotations):,} labelled birds of "
+        lines.append(f"{len(t.annotations):,} labelled {word('birds')} of "
                      f"{t.annotations['species_key'].n_unique()} species"
                      + (f" · {t.n_unknown} unknown" if t.n_unknown else ""))
         ss = sample_state(dataset, ref)
@@ -205,7 +227,7 @@ def borrowed_fit(ident: str, exclude: str) -> tuple[str, str] | None:
 
 
 def render() -> SimpleNamespace:
-    datasets = ingest.list_datasets(cfg.store_dir)
+    datasets = ordered_datasets()
     runs = views.list_runs(cfg.store_dir)
     if not datasets:
         st.error("No datasets in the store yet — run `bex ingest-sne` or `bex scan`.")
@@ -240,12 +262,24 @@ def render() -> SimpleNamespace:
                                          for r in ts.overrides}
         st.session_state["set_loaded"] = ts.to_json()
 
+    # A project can name a threshold set to open with ([defaults] threshold_set):
+    # without closed labels there is nothing to fit a rule on, and the lanes are empty.
+    if ("active_set" not in st.session_state
+            and cfg.default_threshold_set in th.list_sets(cfg.thresholds_dir)):
+        st.session_state["active_set"] = cfg.default_threshold_set
+        load_active_set()
+
     with st.sidebar:
         if st.session_state.get("dataset") not in datasets:
             st.session_state.pop("dataset", None)
+            if (opening := opening_dataset(datasets)) is not None:
+                st.session_state["dataset"] = opening
         dataset = st.selectbox("Dataset", datasets, key="dataset",
                                persist_state="session",
                                help="Choose a dataset here or on the Home page.")
+        from bex import prefs
+        if prefs.get(cfg.store_dir, "last_dataset") != dataset:
+            prefs.put(cfg.store_dir, "last_dataset", dataset)
         recordings, _ = get_dataset(dataset)
         with st.container(key="g_view"):
             truth_ref = truth_choice(dataset)
@@ -314,11 +348,28 @@ def render() -> SimpleNamespace:
             help="How each model's threshold is chosen, species by species. θ is not "
                  "comparable between models, so every model gets its own. Everything "
                  "this produces, and hand overrides, are on the Thresholds page.")
+
+        def fixed_inputs() -> list[tuple[str, float]]:
+            st.caption("Fixed θ per model — scores are on different scales, so one "
+                       "number cannot serve them all.")
+            values = []
+            for rid, ident in ident_of.items():
+                st.session_state.setdefault(f"fixed::{ident}", th.DEFAULT_FIXED)
+                v = st.number_input(f"θ · {run_label[rid]}", 0.0, 1.0, step=0.01,
+                                    format="%.4f", key=f"fixed::{ident}",
+                                    persist_state="session")
+                values.append((ident, float(v)))
+            return values
+
+        # A fixed rule's numbers are the thresholds, so they sit here, in view. A slider
+        # that looks live while nothing else moves the lanes reads as a broken link.
+        fixed = fixed_inputs() if rule_kind == "fixed" else []
         p_floor = st.slider("Precision floor", 0.50, 0.99, step=0.01, key="p_floor",
-                            persist_state="session",
+                            persist_state="session", disabled=rule_kind == "fixed",
                             help="For the precision-floor rule: the highest recall "
                                  "available while staying this precise. Also the "
-                                 "floor the Compare page reports.")
+                                 "floor the Compare page reports. Not used by a "
+                                 "fixed rule, except on the Compare page's report.")
         sets = th.list_sets(cfg.thresholds_dir)
         if st.session_state.get("active_set") not in [NO_SET, *sets]:
             st.session_state["active_set"] = NO_SET
@@ -370,16 +421,8 @@ def render() -> SimpleNamespace:
                      "labelled windows, never annotated, or unreachable. model-wide: "
                      "the rule applied to all of the model's species pooled. fixed: "
                      "the fixed θ below.")
-            fixed = []
-            if rule_kind == "fixed" or fallback == "fixed":
-                st.caption("Fixed θ per model — scores are on different scales, so one "
-                           "number cannot serve them all.")
-                for rid, ident in ident_of.items():
-                    st.session_state.setdefault(f"fixed::{ident}", th.DEFAULT_FIXED)
-                    v = st.number_input(f"θ · {run_label[rid]}", 0.0, 1.0, step=0.01,
-                                        format="%.4f", key=f"fixed::{ident}",
-                                        persist_state="session")
-                    fixed.append((ident, float(v)))
+            if rule_kind != "fixed" and fallback == "fixed":
+                fixed = fixed_inputs()
             st.divider()
             delta = st.slider("Δ (shadowing band)", 0.05, 0.50, 0.15, 0.05, key="delta",
                               persist_state="session",

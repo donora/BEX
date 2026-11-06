@@ -110,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
             f"loaded Perch has {window_s}s windows but run {args.run_id} was scored "
             f"at {manifest.window_s}s — these embeddings would not align with it"
         )
+    # The run's own grid: an overlapping run needs overlapping embeddings.
+    overlap = window_s - manifest.hop_s
 
     dim = None
     for row in todo.iter_rows(named=True):
@@ -118,7 +120,8 @@ def main(argv: list[str] | None = None) -> int:
         src = str(ingest.resolve_audio(cfg.store_dir, args.dataset, audio_root,
                                        rid, row["path"]))
         emb = np.asarray(
-            model.encode(src, n_workers=workers, show_stats=None).embeddings)[0]
+            model.encode(src, n_workers=workers, overlap_duration_s=overlap,
+                         show_stats=None).embeddings)[0]
 
         sm = store.read_scores(cfg.store_dir, args.run_id, rid)
         if emb.shape[0] != sm.scores.shape[0]:
@@ -148,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         "model_name": "perch",
         "model_version": str(model.get_version()),
         "window_s": window_s,
-        "hop_s": window_s,
+        "hop_s": manifest.hop_s,
         "input_sr": model.get_sample_rate(),
         "dim": dim,
         "dtype": "float16",

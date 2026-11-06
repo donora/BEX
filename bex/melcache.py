@@ -18,7 +18,7 @@ cache; they read audio. This is purely the app's view.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 from typing import Callable
 
@@ -33,6 +33,23 @@ DISPLAY_MEL = MelParams(hop_length=512)
 
 def mel_path(cache_dir: str | Path, dataset: str, recording_id: str) -> Path:
     return Path(cache_dir) / "mel" / dataset / f"{recording_id}.npz"
+
+
+def display_params(overrides: dict | None = None) -> MelParams:
+    """The default display settings with a config's [display] section applied.
+    An unknown key is an error: a typo would otherwise silently change nothing."""
+    overrides = overrides or {}
+    known = {f.name for f in fields(MelParams)}
+    unknown = sorted(set(overrides) - known)
+    if unknown:
+        raise ValueError(f"unknown [display] settings {unknown}; expected {sorted(known)}")
+    return replace(DISPLAY_MEL, **overrides)
+
+
+def is_current(path: str | Path, p: MelParams = DISPLAY_MEL) -> bool:
+    """Was this cache entry built with these settings? Each entry records its own."""
+    with np.load(path) as z:
+        return all(z[k].item() == v for k, v in asdict(p).items())
 
 
 def build_one(

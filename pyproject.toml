@@ -1,6 +1,6 @@
 [project]
 name = "bex-bioacoustics"
-version = "1.2.2"
+version = "1.3.0"
 description = "BEX, the Bioacoustics Explorer: benchmark bioacoustic ID models on your own recordings, with the geographic filter made visible"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -61,12 +61,14 @@ packages = ["bex"]
 [tool.hatch.build.targets.wheel.force-include]
 "app.py" = "bex/webapp/app.py"
 "ui" = "bex/webapp/ui"
-"assets" = "bex/webapp/assets"
+# Named one by one: a folder here is copied whole, ignoring .gitignore, so anything
+# dropped into it would ship.
+"assets/mission_flow.svg" = "bex/webapp/assets/mission_flow.svg"
 "profiles" = "bex/data/profiles"
 "bex.example.toml" = "bex/data/bex.example.toml"
 
 [tool.hatch.build.targets.sdist]
-include = ["bex", "ui", "app.py", "assets", "profiles", "bex.example.toml",
+include = ["bex", "ui", "app.py", "assets/mission_flow.svg", "profiles", "bex.example.toml",
            "envs", "scripts", "tests", "README.md", "LICENSE", "PLAN.md", "V1.md",
            ".streamlit/config.toml"]
 

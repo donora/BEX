@@ -53,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sf-thresh", type=float, default=SF_THRESH_DEFAULT,
                     help="occurrence threshold reproducing BirdNET's own species filter")
     ap.add_argument("--run-id", default="", help="resume an existing run")
+    ap.add_argument("--overlap", type=float, default=None,
+                    help="seconds consecutive windows share (default 0). A new run "
+                         "records it as hop_s; a resume keeps the run's own.")
     ap.add_argument("--config", default=None)
     args = ap.parse_args(argv)
 
@@ -78,12 +81,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.run_id:
         manifest = RunManifest.load(cfg.store_dir, args.run_id)
         assert manifest.model_name == "birdnet", manifest.model_name
+        overlap = WINDOW_S - manifest.hop_s
+        if args.overlap is not None and abs(args.overlap - overlap) > 1e-6:
+            raise SystemExit(f"run {args.run_id} has overlap {overlap:g} s; refusing to "
+                             f"append windows on a {args.overlap:g} s overlap to it.")
     else:
+        overlap = args.overlap or 0.0
+        if not 0 <= overlap < WINDOW_S:
+            raise SystemExit(f"--overlap must be at least 0 and under {WINDOW_S:g} s")
         manifest = RunManifest(
             model_name="birdnet",
             model_version="2.4",
             window_s=WINDOW_S,
-            hop_s=WINDOW_S,
+            hop_s=WINDOW_S - overlap,
             input_sr=acoustic.get_sample_rate(),
             score_transform="sigmoid",
             geofilter={
@@ -101,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         manifest.save(cfg.store_dir)
     run_id = manifest.run_id
+    hop_s = manifest.hop_s
     # The model's original labels, index-aligned with the score columns — the
     # app derives display names (e.g. BirdNET's common names) from these.
     labels_path = Path(cfg.store_dir) / "runs" / run_id / "labels.txt"
@@ -120,22 +131,24 @@ def main(argv: list[str] | None = None) -> int:
             str(ingest.resolve_audio(cfg.store_dir, args.dataset, audio_root,
                                      row["recording_id"], row["path"])),
             top_k=None,
+            overlap_duration_s=overlap,
             default_confidence_threshold=None,
             show_stats=None,
         )
         probs = np.asarray(res.species_probs)[0]  # (windows, classes)
-        assert res.hop_duration_s == res.segment_duration_s == WINDOW_S
+        assert res.segment_duration_s == WINDOW_S, res.segment_duration_s
+        assert abs(res.hop_duration_s - hop_s) < 1e-6, res.hop_duration_s
         sm = store.ScoreMatrix(
             recording_id=row["recording_id"],
             run_id=run_id,
             scores=scores_to_matrix(probs),
-            start_s=(np.arange(probs.shape[0]) * WINDOW_S).astype(np.float32),
+            start_s=(np.arange(probs.shape[0]) * hop_s).astype(np.float32),
             window_s=WINDOW_S,
             species_keys=keys,
         )
         store.write_scores(cfg.store_dir, sm)
         n_win = probs.shape[0]
-        expected = math.floor(row["duration_s"] / WINDOW_S)
+        expected = math.floor(row["duration_s"] / hop_s)
         if abs(n_win - expected) > 1:
             print(f"  WARNING {row['recording_id']}: {n_win} windows for "
                   f"{row['duration_s']:.0f}s audio (expected ~{expected})", flush=True)

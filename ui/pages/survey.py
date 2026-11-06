@@ -112,6 +112,14 @@ def render(ctx) -> None:
     # A species list is for a whole recording (P2), so only recordings labelled
     # end to end can judge one; a closed recording with no birds counts too.
     all_ids = sorted(set(ctx.truth_obj.complete) & set(recordings["recording_id"].to_list()))
+    if len(recordings) < 2:
+        st.info(f"A survey protocol is scored recording by recording — did the list name "
+                f"the right species? — so it needs at least two recordings, and "
+                f"**{dataset}** has one. You can still see the species lists without scores.")
+        st.button("Switch to all recordings, unscored", type="primary", key="sv_to_all",
+                  on_click=sidebar.set_view, args=(dataset, sidebar.VIEW_ALL))
+        apply_setup(ctx, lambda k: views.display_name(k, get_names()))
+        return
     if len(all_ids) < 2:
         st.info(f"A survey protocol is judged recording by recording — did the list "
                 f"name the right species? — so it needs recordings labelled from start "
@@ -122,7 +130,7 @@ def render(ctx) -> None:
         from bex import labels as label_sets   # `labels` here is the model dict
         name, version = label_sets.parse_ref(ctx.truth_ref)
         if name != label_sets.IMPORTED and version is None:
-            k = st.number_input("Whole recordings to add", 1, len(recordings), 2,
+            k = st.number_input("Whole recordings to add", 1, len(recordings), min(2, len(recordings)),
                                 key="sv_whole_n")
             if st.button(f"Add {int(k)} whole recording{'s' * (k != 1)} to the "
                          f"labelling sample of {name}", type="primary", key="sv_whole"):
@@ -1229,7 +1237,7 @@ def recording_card(rec, order, colour, run, rules, nm) -> None:
 # --------------------------------------------------------------------------- #
 
 def unlabelled(ctx, labels, order, colour, nm) -> None:
-    st.info(f"**{ctx.dataset}** has no annotations, so rules cannot be scored or swept "
+    st.info("This view has no labels to score against, so rules cannot be scored or swept "
             "here. The lists below use the sidebar's thresholds — load a threshold set "
             "fitted on labelled data to make them meaningful.")
     a, b = st.columns(2)

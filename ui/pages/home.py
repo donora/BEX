@@ -130,7 +130,18 @@ def dataset_card(d: str, i: int = 0) -> None:
         top, buttons = st.columns([2.4, 1.3], vertical_alignment="top")
         with top:
             current = " · <i>current</i>" if st.session_state.get("dataset") == d else ""
-            st.markdown(f"#### {d}")
+            is_starred = d in prefs.starred(cfg.store_dir)
+            # Keyed on the card's index, because a dataset's name need not be a CSS name.
+            st.markdown(
+                f"<style>.st-key-star_{i} button p{{font-size:1.75rem; line-height:1; "
+                f"color:{'#f2b200' if is_starred else '#9a9992'}}}</style>",
+                unsafe_allow_html=True)
+            star, title = st.columns([0.05, 0.95], vertical_alignment="center", gap="small")
+            with star.container(key=f"star_{i}"):
+                st.button("★" if is_starred else "☆", key=f"h_star_{d}", type="tertiary",
+                          on_click=prefs.toggle_star, args=(cfg.store_dir, d),
+                          help="Unstar" if is_starred else "Star: keep this dataset at the top")
+            title.markdown(f"#### {d}")
             st.markdown(f"<div style='font-size:0.88rem; opacity:0.8'>{sites} "
                         f"site{'s' * (sites != 1)} · {len(recs):,} recordings · "
                         f"{hours:,.1f} h · {labels_fact(d, recs)}{current}</div>",
@@ -158,11 +169,12 @@ def dataset_card(d: str, i: int = 0) -> None:
                              help="Label a random sample of minutes, so the models can "
                                   "be scored on this site."):
                     go(d, "ui/pages/label.py")
-                if st.button("Explore all recordings", key=f"h_exp_{d}", width="stretch",
+                if st.button("Explore", key=f"h_exp_{d}", width="stretch",
                              type="primary" if nxt == "explored" else "secondary",
-                             help="Every recording, what each model reports, unscored. "
-                                  "Switch to the labelled data at any time."):
-                    go(d, "ui/pages/explorer.py", sidebar.VIEW_ALL)
+                             help="What each model reports, scored against your labels "
+                                  "where you have finished some. Switch between labelled "
+                                  "data and all recordings at any time."):
+                    go(d, "ui/pages/explorer.py")
         # Setting up happens here, in the card, not on another page: until the
         # spectrograms and model runs exist there is nowhere useful to go.
         if steps["models"][0] != "done":
@@ -355,7 +367,7 @@ def setup_steps(d: str) -> None:
                          "that needs repairing takes a minute or so")
             try:
                 if repair.build_mel(cfg.cache_dir, cfg.store_dir, d, rid, rel,
-                                    audio_root) == "repaired":
+                                    audio_root, cfg.display) == "repaired":
                     repaired.append(rid)
             except Exception as e:  # noqa: BLE001 — report and carry on with the rest
                 failed.append(f"{rid}: {e}")
@@ -495,7 +507,7 @@ def render() -> None:
     flash = st.session_state.pop("home_flash", None)
     if flash:
         st.success(flash)
-    datasets = ingest.list_datasets(cfg.store_dir)
+    datasets = ordered_datasets()
     if (not prefs.get(cfg.store_dir, "welcome_seen")
             and not st.session_state.get("_welcome_shown")):
         st.session_state["_welcome_shown"] = True      # once per visit, even if dismissed
@@ -505,8 +517,15 @@ def render() -> None:
     if not datasets:
         st.info("No datasets yet. Add a folder of recordings below to begin — or, for "
                 "the demonstration set, `bex ingest-sne` (see the README).")
-    for i, d in enumerate(datasets):
+    # With anything starred, the rest fold away: tidy, and one click from reach.
+    stars = set(prefs.starred(cfg.store_dir))
+    others = [d for d in datasets if d not in stars] if stars else []
+    for i, d in enumerate(d for d in datasets if d not in others):
         dataset_card(d, i)
+    if others:
+        with st.expander(f"{len(others)} other dataset{'s' * (len(others) != 1)}"):
+            for i, d in enumerate(others, start=len(datasets) - len(others)):
+                dataset_card(d, i)
 
     with st.container(key="g_add"), st.expander(
             "➕ Add a dataset",

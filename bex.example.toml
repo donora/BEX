@@ -25,7 +25,23 @@ lon = -119.95
 [defaults]
 profile = "uk-starter"
 
+# Optional, under [defaults] above:
+#   dataset = "my-site"            the dataset the app first opens on
+#   threshold_set = "my-set"       the saved threshold set it opens with
+#   species_first = ["Turdus merula", "Erithacus rubecula"]
+#                                  the species that take the first colours, in order
+
+# [display]                        the app's spectrogram, for sounds outside birdsong's range
+# fmin = 150                       also: fmax, n_fft, hop_length, n_mels
+#
+# [terms]                          the app's words, for projects on other animals
+# birdsong = "frog call"           also: bird, birds, songs, "Unknown bird", "When a bird is singing"
+
+# [extensions]                     a project's own panel on the Explorer and Label pages
+# panel = "extensions/my_panel.py" see bex/extensions.py
+
 [xeno_canto]
+# links = false                    turn off species links, for animals it does not cover
 # Free per-user key from xeno-canto.org (needed only for cached example audio;
 # plain link-outs work without it). Never commit a real key.
 api_key = ""

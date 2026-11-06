@@ -83,26 +83,31 @@ def repair_recording(src: str | Path, dst: str | Path) -> float:
 
 
 def build_mel(cache_dir: str | Path, store_dir: str | Path, dataset: str,
-              recording_id: str, rel_path: str, audio_root: str | Path) -> str:
+              recording_id: str, rel_path: str, audio_root: str | Path,
+              display: dict | None = None) -> str:
     """Build one recording's display spectrogram, repairing it first if
     libsndfile cannot decode it. Returns 'cached', 'built' or 'repaired'.
 
     Repairing here, at the first step that reads every file end to end, means
     the model runners — which read through `ingest.resolve_audio` too — find a
     clean copy waiting, instead of failing an hour into a run.
+
+    `display` is the config's [display] section. An entry built with other
+    settings is rebuilt, so editing the config cannot leave a stale view.
     """
     from . import ingest
-    from .melcache import build_one, mel_path
+    from .melcache import build_one, display_params, is_current, mel_path
 
+    p = display_params(display)
     out = mel_path(cache_dir, dataset, recording_id)
-    if out.exists():
+    if out.exists() and is_current(out, p):
         return "cached"
     src = ingest.resolve_audio(store_dir, dataset, audio_root, recording_id, rel_path)
     try:
-        build_one(src, out)
+        build_one(src, out, p)
         return "built"
     except sf.LibsndfileError:
         dst = ingest.repairs_dir(store_dir, dataset) / f"{recording_id}.flac"
         repair_recording(Path(audio_root) / rel_path, dst)
-        build_one(dst, out)
+        build_one(dst, out, p)
         return "repaired"

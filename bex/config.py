@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import os.path
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -46,6 +46,20 @@ class Config:
     site_lon: float | None
     default_profile: str
     xc_api_key: str
+    # [display] overrides for the app's spectrogram (melcache.display_params).
+    display: dict = field(default_factory=dict)
+    # [defaults] threshold_set: the saved threshold set the app opens with.
+    default_threshold_set: str = ""
+    # [defaults] dataset: the dataset the app opens on.
+    default_dataset: str = ""
+    # [defaults] species_first: the species that take the first colours, in order.
+    species_first: tuple = ()
+    # [terms]: the app's words for other taxa, e.g. birdsong = "frog call".
+    terms: dict = field(default_factory=dict)
+    # [extensions] panel: a project's own panel for the Explorer and Label pages.
+    panel_file: Path | None = None
+    # [xeno_canto] links: species names link to Xeno-Canto, which is birds and a few others.
+    xc_links: bool = True
 
 
 def _find_config() -> Path:
@@ -99,6 +113,14 @@ def load_config(path: str | Path | None = None) -> Config:
         site_lon=site.get("lon"),
         default_profile=raw.get("defaults", {}).get("profile", ""),
         xc_api_key=raw.get("xeno_canto", {}).get("api_key", ""),
+        display=dict(raw.get("display", {})),
+        default_threshold_set=raw.get("defaults", {}).get("threshold_set", ""),
+        default_dataset=raw.get("defaults", {}).get("dataset", ""),
+        species_first=tuple(raw.get("defaults", {}).get("species_first", ())),
+        terms=dict(raw.get("terms", {})),
+        xc_links=bool(raw.get("xeno_canto", {}).get("links", True)),
+        panel_file=(resolve("extensions", "panel", "")
+                    if raw.get("extensions", {}).get("panel") else None),
     )
 
 
@@ -135,6 +157,12 @@ name = ""
 
 [defaults]
 profile = "uk-starter"
+
+[display]
+# The app's spectrogram, for sounds outside birdsong's range. Any of: fmin, fmax,
+# n_fft, hop_length, n_mels. Changing one rebuilds the spectrograms on next use.
+# fmin = 150
+# fmax = 14000
 
 [xeno_canto]
 # Free key from xeno-canto.org, only for cached example audio. Never commit it.

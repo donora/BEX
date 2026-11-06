@@ -32,6 +32,45 @@ from bex.profiles import list_profiles, load_profile
 from bex.taxonomy import xc_species_url
 
 cfg = load_config()
+
+
+def ordered_datasets() -> list[str]:
+    """The datasets, starred ones first."""
+    from bex import prefs
+    return prefs.stars_first(ingest.list_datasets(cfg.store_dir), prefs.starred(cfg.store_dir))
+
+
+def opening_dataset(names: list[str]) -> str | None:
+    """The dataset to open on: where this store was last in use, so a reload puts
+    people back where they were, then the project's default, then the first."""
+    from bex import prefs
+    for candidate in (prefs.get(cfg.store_dir, "last_dataset"), cfg.default_dataset):
+        if candidate in names:
+            return candidate
+    return next(iter(names), None)
+
+
+@st.cache_resource(show_spinner=False)
+def _load_project_panel(path: str):
+    from bex.extensions import load_panel
+    return load_panel(path)
+
+
+def project_panel(dataset: str, recording_id: str, t: float, page: str) -> None:
+    """A project's own panel, from `[extensions] panel` (see bex/extensions.py). A fault
+    in it is reported here and never takes the page down with it."""
+    if cfg.panel_file is None:
+        return
+    try:
+        _load_project_panel(str(cfg.panel_file))(dataset=dataset, recording_id=recording_id,
+                                                 t=t, page=page, store_dir=cfg.store_dir)
+    except Exception as e:  # noqa: BLE001 — it is someone else's code, on a working page
+        st.warning(f"The project's panel failed: {e}")
+
+
+def word(text: str) -> str:
+    """The project's word for this, from [terms] in bex.toml."""
+    return cfg.terms.get(text, text)
 REPO_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -408,7 +447,7 @@ def get_benchmark(run_id: str, dataset_name: str, mode: str, profile_name: str,
     return {
         "per_recording": per_rec,
         "intervals": uncertainty.bootstrap(per_rec),
-        "summary": benchmark.summary(lab, boxes, hours),
+        "summary": benchmark.summary(lab, boxes, hours, t.annotations),
         "per_species": per_species,
         "micro": metrics.curve_frame(metrics.thin(card["micro"], 400)).to_pandas(),
         "cmap": card["row"]["cmap"],

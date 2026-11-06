@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,69 @@ from .taxonomy import normalise_key, xc_species_url
 CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
                "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 OTHER_COLOR = "#9a9992"
+
+
+def _oklab(hex_colour: str) -> np.ndarray:
+    """A colour in OKLab, where distance roughly matches how different colours look."""
+    rgb = np.array([int(hex_colour[i:i + 2], 16) for i in (1, 3, 5)]) / 255
+    lin = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    lms = np.array([[0.4122214708, 0.5363325363, 0.0514459929],
+                    [0.2119034982, 0.6806995451, 0.1073969566],
+                    [0.0883024619, 0.2817188376, 0.6299787005]]) @ lin
+    return np.array([[0.2104542553, 0.7936177850, -0.0040720468],
+                     [1.9779984951, -2.4285922050, 0.4505937099],
+                     [0.0259040371, 0.7827717662, -0.8086757660]]) @ np.cbrt(lms)
+
+
+def _oklch_to_hex(lightness: float, chroma: float, hue_deg: float) -> str | None:
+    """OKLCh -> '#rrggbb', or None when the colour is outside what a screen shows."""
+    a, b = chroma * np.cos(np.radians(hue_deg)), chroma * np.sin(np.radians(hue_deg))
+    lms = np.array([lightness + 0.3963377774 * a + 0.2158037573 * b,
+                    lightness - 0.1055613458 * a - 0.0638541728 * b,
+                    lightness - 0.0894841775 * a - 1.2914855480 * b]) ** 3
+    lin = np.array([[4.0767416621, -3.3077115913, 0.2309699292],
+                    [-1.2684380046, 2.6097574011, -0.3413193965],
+                    [-0.0041960863, -0.7034186147, 1.7076147010]]) @ lms
+    if lin.min() < -1e-4 or lin.max() > 1 + 1e-4:
+        return None
+    lin = np.clip(lin, 0, 1)
+    rgb = np.where(lin <= 0.0031308, 12.92 * lin, 1.055 * lin ** (1 / 2.4) - 0.055)
+    return "#" + "".join(f"{int(round(v * 255)):02x}" for v in rgb)
+
+
+@lru_cache(maxsize=1)
+def _colour_sequence() -> tuple[str, ...]:
+    """CATEGORICAL, then every further colour as far as possible from those before it.
+
+    The order is fixed, so a species keeps its colour however many follow it. Candidates
+    are mid-lightness and clearly coloured, to read on both the dark spectrogram and
+    the white lanes, and must also stay clear of the grey and white marks.
+    """
+    candidates = [c for c in (_oklch_to_hex(lt, ch, hue)
+                              for lt in (0.52, 0.60, 0.68, 0.76)
+                              for ch in (0.10, 0.14, 0.18)
+                              for hue in range(0, 360, 15)) if c]
+    points = np.array([_oklab(c) for c in candidates])
+    taken = [_oklab(c) for c in (*CATEGORICAL, OTHER_COLOR, "#dedcd3", "#ffffff")]
+    nearest = np.min([np.linalg.norm(points - t, axis=1) for t in taken], axis=0)
+    sequence = list(CATEGORICAL)
+    for _ in range(len(candidates)):
+        pick = int(nearest.argmax())
+        sequence.append(candidates[pick])
+        nearest = np.minimum(nearest, np.linalg.norm(points - points[pick], axis=1))
+    return tuple(dict.fromkeys(sequence))
+
+
+def species_colour(i: int) -> str:
+    """The i-th species' colour. The later ones are harder to tell apart, so anything
+    past the first eight is also named where it is drawn (`needs_name`)."""
+    sequence = _colour_sequence()
+    return sequence[i % len(sequence)]
+
+
+def needs_name(colour: str) -> bool:
+    """Too close to its neighbours to identify from the key alone."""
+    return colour not in CATEGORICAL
 
 # Sequential ramp (one hue, light -> dark) for the activity navigator.
 ACTIVITY_RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#104281"]
@@ -680,6 +744,42 @@ def lane_lines(
                         "strength", "implausible", "correct")
                 .sort("strength"))
 
+def score_runs(marks: pl.DataFrame, hop_s: float) -> list[pl.DataFrame]:
+    """Overlapping windows as one line each: for each species, its unbroken runs of
+    above-threshold windows. Drawn as bars, a 5 s window every second stacks five
+    bars at any moment, which reads as five detections rather than one rising and
+    falling score. Each run gains `center_s`, the time to plot it at."""
+    if marks.is_empty():
+        return []
+    runs = []
+    with_center = marks.with_columns(center_s=(pl.col("start_s") + pl.col("end_s")) / 2)
+    for _, g in with_center.sort("start_s").group_by("species_key", maintain_order=True):
+        breaks = (g["start_s"].diff().fill_null(0.0) > hop_s * 1.5).cum_sum()
+        runs += [run for _, run in g.with_columns(run=breaks).group_by("run", maintain_order=True)]
+    return runs
+
+
+def run_reach(run: pl.DataFrame, hop_s: float) -> tuple[float, float]:
+    """How far one run of windows could have heard: from its first window's start to
+    its last window's end, plus half a hop each side, because a sound can fall between
+    two steps of the grid. Relative to a line drawn at window centres, that is
+    window/2 + hop/2 beyond each end."""
+    return float(run["start_s"].min()) - hop_s / 2, float(run["end_s"].max()) + hop_s / 2
+
+
+def run_correct(run: pl.DataFrame, ann: pl.DataFrame | None, recording_id: str,
+                hop_s: float) -> bool | None:
+    """Is this run, taken as one prediction, right? True when a box of its species
+    falls within its reach. A long run can earn this from one call, so judge how much
+    it claims separately (benchmark.flagged_fraction). None without annotations."""
+    if ann is None:
+        return None
+    lo, hi = run_reach(run, hop_s)
+    return ann.filter((pl.col("recording_id") == recording_id)
+                      & (pl.col("species_key") == run["species_key"][0])
+                      & (pl.col("start_s") < hi) & (pl.col("end_s") > lo)).height > 0
+
+
 def truth_blocks(ann: pl.DataFrame, recording_id: str, t0: float, t1: float) -> pl.DataFrame:
     """Ground-truth boxes intersecting the span (full boxes, not clipped)."""
     return ann.filter(
@@ -757,17 +857,43 @@ def multi_window_table(
     return pl.concat(frames, how="diagonal_relaxed")
 
 
+def label_palette(boxes: pl.DataFrame | None, first: tuple | list = (),
+                  skip: tuple | list = ()) -> dict[str, str]:
+    """A species' colour from a whole set of labels, so it does not change from one
+    minute or recording to the next.
+
+    `first` (a project's [defaults] species_first) takes the first colours, present or
+    not. The rest follow in the order they were first labelled, so labelling a new
+    species takes the next colour without moving any other. Boxes imported together
+    tie, and go by count. Colours never run out (`species_colour`).
+    """
+    ranked = list(dict.fromkeys(first))
+    if boxes is not None and len(boxes):
+        order = boxes.with_columns(when=pl.col("labelled_at") if "labelled_at" in boxes.columns
+                                   else pl.lit(""))
+        rows = (order.group_by("species_key")
+                .agg(when=pl.col("when").min(), n=pl.len())
+                .sort(["when", "n", "species_key"], descending=[False, True, False]))
+        ranked += [k for k in rows["species_key"].to_list()
+                   if k not in ranked and k not in skip]
+    return {k: species_colour(i) for i, k in enumerate(ranked)}
+
+
 def species_palette(*frames: pl.DataFrame,
-                    priority: pl.DataFrame | None = None) -> dict[str, str]:
-    """Stable color per species for the current view: the 8 most-present species
-    (by block count across the given frames) take the categorical slots in that
-    order; the rest are 'Other' gray. Within one rendered view every lane and
-    the legend share this mapping, so color follows the entity.
+                    priority: pl.DataFrame | None = None,
+                    fixed: dict[str, str] | None = None) -> dict[str, str]:
+    """Stable color per species for the current view: the most-present species (by
+    block count across the given frames) take the colours in order, so within one
+    rendered view every lane and the legend share this mapping, and color follows
+    the entity.
 
     Species in `priority` (the recording's annotations) are coloured first, by
     their own count, and only then the most-detected. Ranking by detections
     alone greyed out exactly the annotated birds the models were missing —
     the ones a viewer is most likely checking.
+
+    `fixed` (from `label_palette`) keeps those species' colours whatever is on
+    screen; the others share the colours it leaves free.
     """
     def tally(fs) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -782,9 +908,12 @@ def species_palette(*frames: pl.DataFrame,
     ranked = (sorted(first, key=lambda k: (-first[k], k))
               + sorted((k for k in counts if k not in first),
                        key=lambda k: (-counts[k], k)))
-    palette = {k: CATEGORICAL[i] for i, k in enumerate(ranked[:len(CATEGORICAL)])}
-    for k in ranked[len(CATEGORICAL):]:
-        palette[k] = OTHER_COLOR
+    fixed = fixed or {}
+    used = set(fixed.values())
+    rest = [k for k in ranked if k not in fixed]
+    free = (species_colour(i) for i in range(len(fixed) + len(rest) + len(CATEGORICAL)))
+    palette = dict(fixed)
+    palette.update(zip(rest, (c for c in free if c not in used)))
     return palette
 
 
@@ -903,6 +1032,12 @@ def hz_to_mel_row(hz: float, meta: dict) -> float:
         fmax=min(float(meta["fmax"]), meta["sr"] / 2),
     )
     return float(np.interp(hz, centres, np.arange(len(centres))))
+
+
+def khz_ticks(meta: dict) -> list[float]:
+    """The round frequencies (kHz) inside what this cached spectrogram shows."""
+    lo, hi = float(meta["fmin"]), min(float(meta["fmax"]), meta["sr"] / 2)
+    return [k for k in (0.1, 0.2, 0.5, 1, 2, 4, 8, 12, 16) if lo < k * 1000 < hi]
 
 
 def dataset_summary(store_dir: str | Path, name: str, cache_dir: str | Path) -> dict:

@@ -89,7 +89,10 @@ def nav_bar() -> None:
         current = st.session_state.get("dataset")
         if not current:
             from ui.common import cfg, ingest
-            current = next(iter(ingest.list_datasets(cfg.store_dir)), None)
+            from ui.common import opening_dataset, ordered_datasets
+            names = ordered_datasets()
+            # The same choice the sidebar will make, so the two agree on first load.
+            current = opening_dataset(names)
         if current:
             # The view, said everywhere and switchable from anywhere (V1.2 F0).
             from ui import sidebar

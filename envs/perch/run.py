@@ -124,6 +124,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--min-score", type=float, default=None,
                     help="detections-index floor (default: per readout, see below)")
     ap.add_argument("--run-id", default="", help="resume an existing run")
+    ap.add_argument("--overlap", type=float, default=None,
+                    help="seconds consecutive windows share (default 0). A new run "
+                         "records it as hop_s; a resume keeps the run's own.")
     ap.add_argument("--workers", type=int, default=None,
                     help="""workers the model may spawn. The package's default is one per
                          logical core, and each worker runs TensorFlow with its own
@@ -199,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
         manifest = RunManifest.load(cfg.store_dir, args.run_id)
         assert manifest.model_name == "perch", manifest.model_name
         window_s = manifest.window_s
+        overlap = window_s - manifest.hop_s
+        if args.overlap is not None and abs(args.overlap - overlap) > 1e-6:
+            raise SystemExit(f"run {args.run_id} has overlap {overlap:g} s; refusing to "
+                             f"append windows on a {args.overlap:g} s overlap to it.")
         # A resume must not change the readout. Half a run scored with softmax and
         # half with sigmoid would be undetectable downstream — every file looks
         # fine on its own, the manifest would name one transform for scores
@@ -216,11 +223,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"resuming with the run's own readout: {readout}", flush=True)
     else:
         readout = args.readout or "softmax"
+        overlap = args.overlap or 0.0
+        if not 0 <= overlap < window_s:
+            raise SystemExit(f"--overlap must be at least 0 and under {window_s:g} s")
         manifest = RunManifest(
             model_name="perch",
             model_version=str(model.get_version()),
             window_s=window_s,
-            hop_s=window_s,
+            hop_s=window_s - overlap,
             input_sr=model.get_sample_rate(),
             score_transform=SCORE_TRANSFORMS[readout],
             geofilter={
@@ -239,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         manifest.save(cfg.store_dir)
     run_id = manifest.run_id
+    hop_s = manifest.hop_s
     (Path(cfg.store_dir) / "runs" / run_id / "labels.txt").write_text(
         "\n".join(model.species_list) + "\n")
     print(f"run {run_id} -> {cfg.store_dir}", flush=True)
@@ -257,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             src,
             top_k=None,
             n_workers=workers,
+            overlap_duration_s=overlap,
             default_confidence_threshold=None,
             # Exactly one of these; the package rejects both. See --readout.
             apply_softmax=(readout == "softmax"),
@@ -272,19 +284,21 @@ def main(argv: list[str] | None = None) -> int:
             recording_id=row["recording_id"],
             run_id=run_id,
             scores=scores_to_matrix(probs, dtype=score_dtype(readout)),
-            start_s=(np.arange(probs.shape[0]) * window_s).astype(np.float32),
+            start_s=(np.arange(probs.shape[0]) * hop_s).astype(np.float32),
             window_s=window_s,
             species_keys=keys,
         ), dtype=score_dtype(readout))
         if args.embeddings:
-            emb = np.asarray(model.encode(src, show_stats=None).embeddings)[0]
+            emb = np.asarray(model.encode(src, n_workers=workers,
+                                          overlap_duration_s=overlap,
+                                          show_stats=None).embeddings)[0]
             out = Path(cfg.store_dir) / "embeddings" / run_id
             out.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(out / f"{row['recording_id']}.npz",
                                 embeddings=emb.astype(np.float16))
 
         n_win = probs.shape[0]
-        expected = math.floor(row["duration_s"] / window_s)
+        expected = math.floor(row["duration_s"] / hop_s)
         if abs(n_win - expected) > 1:
             print(f"  WARNING {row['recording_id']}: {n_win} windows for "
                   f"{row['duration_s']:.0f}s (expected ~{expected})", flush=True)

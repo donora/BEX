@@ -154,3 +154,36 @@ def test_species_lists_name_what_a_recording_would_be_said_to_hold():
     strict = dict(species_lists(det, ann, min_detections=2)
                   .select("species_key", "outcome").iter_rows())
     assert strict[ROBIN] == "correct" and "Regulus ignicapilla" not in strict
+
+
+def _lab(rows):
+    return pl.DataFrame(rows, schema=["recording_id", "species_key", "start_s", "end_s", "y_true", "hit"],
+                        orient="row")
+
+
+def test_chance_flagged_and_per_second_put_wide_windows_in_context():
+    from bex.benchmark import chance_precision, flagged_fraction, per_second_precision
+
+    # Two 10 s windows of one species: one holds a 1 s sound, one is reported each.
+    lab = _lab([("r", "a", 0.0, 10.0, 1, True), ("r", "a", 10.0, 20.0, 0, False)])
+    boxes = pl.DataFrame({"recording_id": ["r"], "species_key": ["a"],
+                          "start_s": [2.0], "end_s": [3.0]})
+    assert chance_precision(lab) == pytest.approx(0.5)
+    assert flagged_fraction(lab, hours=20 / 3600) == pytest.approx(0.5)
+    assert per_second_precision(lab, boxes) == pytest.approx(0.1)
+
+
+def test_flagged_fraction_counts_overlapping_windows_once():
+    from bex.benchmark import flagged_fraction
+
+    lab = _lab([("r", "a", 0.0, 5.0, 0, True), ("r", "a", 1.0, 6.0, 0, True),
+                ("r", "b", 2.0, 7.0, 0, True), ("r", "a", 50.0, 55.0, 0, False)])
+    assert flagged_fraction(lab, hours=100 / 3600) == pytest.approx(0.07)
+
+
+def test_no_reports_give_no_chance_figure():
+    from bex.benchmark import chance_precision, per_second_precision
+
+    lab = _lab([("r", "a", 0.0, 5.0, 1, False)])
+    assert math.isnan(chance_precision(lab))
+    assert math.isnan(per_second_precision(lab, lab.head(0)))

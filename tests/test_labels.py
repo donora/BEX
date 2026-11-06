@@ -335,3 +335,19 @@ def test_sne_csv_with_ebird_codes_imports(store):
     _, unmapped = L.read_annotation_file(text, "x.csv", recs, L.species_lookup({ROBIN: ""}))
     assert unmapped == ["amerob"] and L.looks_like_ebird_codes(unmapped)
     assert not L.looks_like_ebird_codes(["American Robin", "Turdus migratorius"])
+
+
+def test_partial_boxes_include_open_chunks_that_truth_leaves_out(tmp_path):
+    recordings = pl.DataFrame({"recording_id": ["r"], "path": ["r.wav"], "duration_s": [120.0],
+                               "sample_rate": [8000], "channels": [1], "start_time": [""],
+                               "site": [""], "lat": [float("nan")], "lon": [float("nan")],
+                               "labelled": [False]})
+    ls = L.create_set(tmp_path, "d", "partial", "me")
+    L.add_box(ls, "r", 1.0, 2.0, float("nan"), float("nan"), "Turdus merula", "me")
+    L.save_set(tmp_path, ls)
+    ref = L.working_ref(tmp_path, "d", "partial")
+    assert len(L.partial_boxes(tmp_path, "d", ref, "r")) == 1
+    assert len(L.truth_from_set(ls, recordings, ref).annotations) == 0
+    assert len(L.partial_boxes(tmp_path, "d", ref, "other")) == 0
+    assert len(L.partial_boxes(tmp_path, "d", "", "r")) == 0
+    assert len(L.partial_boxes(tmp_path, "d", "gone@w123", "r")) == 0

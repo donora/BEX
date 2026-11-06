@@ -58,7 +58,7 @@ def species_options(ls: labels.LabelSet, profile) -> tuple[list[str], callable]:
 
     def fmt(k: str) -> str:
         if k == labels.UNKNOWN_BIRD:
-            return "Unknown bird (heard, not identified)"
+            return f"{word('Unknown bird')} (heard, not identified)"
         common = names.get(k)
         return f"{common} — {k}" if common and common != k else k
     return order, fmt
@@ -192,19 +192,21 @@ MARGIN = 5.0
 
 def chunk_figure(mel, meta, t0, t1, chunk: tuple[float, float], boxes: pl.DataFrame,
                  pending: dict | None, corner: dict | None, fmt,
-                 expert: pl.DataFrame | None = None):
+                 expert: pl.DataFrame | None = None, colours: dict[str, str] | None = None,
+                 hide_boxes: bool = False):
     """The chunk's spectrogram, with a shaded margin of its neighbours, its boxes,
     the first corner of a box being drawn and the box waiting for a species.
     Returns the PNG and the axes box (figure fractions) for turning a click back
     into time and frequency."""
-    fig, ax = plt.subplots(figsize=(14, 4.4))
-    fig.subplots_adjust(left=0.06, right=0.985, top=0.93, bottom=0.12)
+    fig, (ax, lane) = plt.subplots(2, 1, figsize=(14, 5.2), sharex=True,
+                                   gridspec_kw={"height_ratios": [7, 1.1], "hspace": 0.05})
+    fig.subplots_adjust(left=0.06, right=0.985, top=0.94, bottom=0.10)
     n_rows = mel.shape[0]
     s = slice_mel(mel, meta, t0, t1)
     vmin, vmax = display_range(s)
     ax.imshow(s, origin="lower", aspect="auto", cmap="magma",
               extent=[t0, t1, 0, n_rows], vmin=vmin, vmax=vmax)
-    khz = [k for k in (0.5, 1, 2, 4, 8, 12, 16) if k * 1000 < min(meta["fmax"], meta["sr"] / 2)]
+    khz = views.khz_ticks(meta)
     ax.set_yticks([views.hz_to_mel_row(k * 1000, meta) for k in khz],
                   [f"{k:g}" for k in khz])
     ax.set_ylabel("kHz")
@@ -219,11 +221,13 @@ def chunk_figure(mel, meta, t0, t1, chunk: tuple[float, float], boxes: pl.DataFr
     for x in chunk:
         if t0 < x < t1:
             ax.axvline(x, color="#f2f1ec", linewidth=1.2, linestyle=(0, (3, 2)), zorder=3)
-    palette = views.CATEGORICAL
-    keys = list(dict.fromkeys(boxes["species_key"].to_list()))
-    for b in boxes.iter_rows(named=True):
+    colours = colours or {}
+    label_lane(lane, boxes, pending, t0, t1, chunk, colours, fmt)
+    ax.tick_params(labelbottom=False)
+    lane.set_xticks(ticks, [mmss(t) for t in ticks])
+    for b in [] if hide_boxes else boxes.iter_rows(named=True):
         colour = ("#ffffff" if b["species_key"] == labels.UNKNOWN_BIRD
-                  else palette[keys.index(b["species_key"]) % len(palette)])
+                  else colours.get(b["species_key"], views.OTHER_COLOR))
         lo = views.hz_to_mel_row(b["low_hz"], meta) if np.isfinite(b["low_hz"]) else 0
         hi = views.hz_to_mel_row(b["high_hz"], meta) if np.isfinite(b["high_hz"]) else n_rows
         x0, x1 = max(b["start_s"], t0), min(b["end_s"], t1)
@@ -285,6 +289,38 @@ def chunk_figure(mel, meta, t0, t1, chunk: tuple[float, float], boxes: pl.DataFr
     plt.close(fig)
     buf.seek(0)
     return Image.open(buf), pos, x_ticks
+
+
+def label_lane(ax, boxes: pl.DataFrame, pending: dict | None, t0: float, t1: float,
+               chunk: tuple[float, float], colours: dict[str, str], fmt) -> None:
+    """Each box's span in time, under the spectrogram. Boxes with no frequency limits
+    all reach top and bottom up there, so one long box and two short ones look alike."""
+    ax.set_ylim(0, 1)
+    ax.set_yticks([])
+    ax.set_ylabel("labels", rotation=0, ha="right", va="center", fontsize=9)
+    for a, b in ((t0, chunk[0]), (chunk[1], t1)):
+        if b > a:
+            ax.axvspan(a, b, facecolor="#00000012", edgecolor="none", zorder=0)
+    span = t1 - t0
+    if len(boxes):
+        packed = views.pack_rows(boxes)
+        h = 0.84 / (int(packed["row"].max()) + 1)
+        for b in packed.iter_rows(named=True):
+            colour = ("#6b6a63" if b["species_key"] == labels.UNKNOWN_BIRD
+                      else colours.get(b["species_key"], views.OTHER_COLOR))
+            x0, x1 = max(b["start_s"], t0), min(b["end_s"], t1)
+            width = max(x1 - x0, 0.0015 * span)
+            ax.add_patch(plt.Rectangle((x0, 0.08 + b["row"] * h), width, h * 0.86,
+                                       facecolor=colour, edgecolor="none", zorder=2))
+            if x1 - x0 > 0.08 * span:   # room for its name
+                ax.text(x0 + 0.003 * span, 0.08 + (b["row"] + 0.43) * h,
+                        fmt(b["species_key"]).split(" — ")[0], fontsize=6.5, color="#ffffff",
+                        va="center", ha="left", zorder=3, clip_on=True)
+    if pending:
+        x0, x1 = max(pending["start_s"], t0), min(pending["end_s"], t1)
+        if x1 > x0:
+            ax.axvspan(x0, x1, facecolor="none", edgecolor="#1d1b17", linewidth=1.2,
+                       linestyle=(0, (3, 2)), zorder=4)
 
 
 def discard_point(pending: dict, t0: float, t1: float, n_rows: int,
@@ -349,7 +385,7 @@ def suggestions(ctx, rec_id: str, pending: dict, box_key: tuple, opened: bool,
     if not runs:
         return
     if not opened:
-        if st.button("💡 Suggest birds", key="lab_sugg_open",
+        if st.button(f"💡 Suggest {word('birds')}", key="lab_sugg_open",
                      help="What the models heard inside your box, best first, with "
                           "reference recordings to compare. The box is then marked "
                           "as labelled with suggestions."):
@@ -373,7 +409,8 @@ def suggestions(ctx, rec_id: str, pending: dict, box_key: tuple, opened: bool,
                    f"*{key}*</span><br><span style='font-size:0.8rem; opacity:0.7'>"
                    f"{ranks}{' · ⚠ not expected here' if odd else ''}</span>",
                    unsafe_allow_html=True)
-        b.markdown(f"[🔊 Xeno-Canto]({xc_species_url(key)})")
+        if cfg.xc_links:
+            b.markdown(f"[🔊 Xeno-Canto]({xc_species_url(key)})")
         c.button("Use", key=f"lab_use_{i}", on_click=use_species, args=(key,),
                  width="stretch")
 
@@ -548,8 +585,13 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
                    and st.session_state.get("lab_show_expert", True))
     expert = (reference.filter((pl.col("recording_id") == rec_id) & (pl.col("end_s") > t0)
                                & (pl.col("start_s") < t1)) if show_expert else None)
+    # From the whole set, not this minute's boxes, so a species keeps its colour.
+    colours = views.label_palette(ls.boxes, cfg.species_first, skip=(labels.UNKNOWN_BIRD,))
+    hide_boxes = st.toggle("Hide boxes on the spectrogram", key="lab_hide_boxes",
+                           help="To see the sound under a box. Their spans stay in the "
+                                "labels lane, and you can keep drawing.")
     img, pos, x_ticks = chunk_figure(mel, meta, t0, t1, (start, end), shown, pending,
-                                     corner, fmt, expert)
+                                     corner, fmt, expert, colours, hide_boxes)
     with st.container(key="g_lab_spec"):
         click = streamlit_image_coordinates(img, width="stretch",
                                             key=f"lab_img_{rec_id}_{start:g}",
@@ -638,7 +680,10 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
             sp = st.selectbox("Species", order_keys, format_func=fmt,
                               placeholder="Type to search…", key="lab_species")
             a, b = st.columns(2)
-            if a.button("Add box", type="primary", disabled=sp is None, width="stretch"):
+            if a.button("Add box", type="primary", disabled=sp is None or not labeller,
+                        width="stretch",
+                        help=None if labeller else "Enter your name first (top right): "
+                                                   "every label records who made it."):
                 try:
                     labels.add_box(ls, rec_id, pending["start_s"], pending["end_s"],
                                    pending["low_hz"], pending["high_hz"], sp, labeller,
@@ -655,7 +700,7 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
             suggestions(ctx, rec_id, pending, box_key, assisted, fmt)
         else:
             st.caption("Name each box with its species. A bird you hear but cannot "
-                       "identify is *Unknown bird*.")
+                       f"identify is *{word('Unknown bird')}*.")
 
     # ---- this chunk's boxes ---------------------------------------------------- #
     with right:
@@ -706,10 +751,13 @@ def label_view(ctx, ls: labels.LabelSet, labeller: str, activity, share: float) 
     # ---- close / reopen ------------------------------------------------------------ #
     st.divider()
     close_box = st.container(key="g_lab_close")
+    pending_now = st.session_state.get("lab_pending") or {}
+    project_panel(ctx.dataset, rec_id, pending_now.get("start_s", start), "label")
+
     if editable:
         heard_all = close_box.checkbox(
             "I listened to the whole minute, including stretches the guide left grey, "
-            "and every bird I heard has a box.", key=f"lab_ack_{rec_id}_{start:g}",
+            f"and every {word('bird')} I heard has a box.", key=f"lab_ack_{rec_id}_{start:g}",
             help="Closing the minute signs it off: " + TERMS["closed"][1])
         # Whose sign-off this is, beside the button that makes it — the same name
         # as the field at the top of the page, kept in step both ways.
@@ -748,7 +796,8 @@ def build_mel(dataset: str, recs: pl.DataFrame) -> None:
     with st.spinner("building the spectrogram (repairing the file first if it will "
                     "not decode)…"):
         for rid, rel in recs.select("recording_id", "path").iter_rows():
-            repair.build_mel(cfg.cache_dir, cfg.store_dir, dataset, rid, rel, audio_root)
+            repair.build_mel(cfg.cache_dir, cfg.store_dir, dataset, rid, rel, audio_root,
+                             cfg.display)
     get_mel.clear()
 
 
@@ -1059,7 +1108,7 @@ def import_form(ctx, labeller: str) -> None:
         up = st.file_uploader("Annotations file", type=["csv", "txt", "tsv"])
         name = st.text_input("New set name")
         exhaustive = st.checkbox(
-            "Every bird in these recordings is labelled (exhaustive)",
+            f"Every {word('bird')} in these recordings is labelled (exhaustive)",
             help="Yes: every chunk of the recordings in the file is closed — the file "
                  "is ground truth for them. No: the boxes count as birds that were "
                  "there, but nothing says what was *not* there, so they cannot score "

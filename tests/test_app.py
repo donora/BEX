@@ -53,7 +53,7 @@ def test_home_is_the_landing_page_and_leads_to_the_explorer():
     at = open_page("home")
     assert any("ioacoustics" in str(m.value) and "plorer" in str(m.value)
                for m in at.markdown)
-    go = next(b for b in at.button if b.label == "Explore all recordings")
+    go = next(b for b in at.button if b.label == "Explore")
     go.click().run()
     assert not at.exception
     assert any(sb.label == "Recording" for sb in at.selectbox), "did not reach the Explorer"

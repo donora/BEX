@@ -22,6 +22,22 @@ def get(store_dir: str | Path, key: str, default=None):
         return default            # a damaged prefs file never breaks the app
 
 
+def starred(store_dir: str | Path) -> list[str]:
+    """The datasets someone has starred on the Home page."""
+    return list(get(store_dir, "starred_datasets", []))
+
+
+def toggle_star(store_dir: str | Path, dataset: str) -> None:
+    stars = starred(store_dir)
+    put(store_dir, "starred_datasets",
+        [d for d in stars if d != dataset] if dataset in stars else [*stars, dataset])
+
+
+def stars_first(datasets: list[str], stars: list[str]) -> list[str]:
+    """Starred datasets first; each group keeps the order it came in."""
+    return [d for d in datasets if d in stars] + [d for d in datasets if d not in stars]
+
+
 def put(store_dir: str | Path, key: str, value) -> None:
     p = _path(store_dir)
     try:
