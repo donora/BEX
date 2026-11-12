@@ -5,12 +5,15 @@ clone — on a working checkout it catches anything that would greet the user
 with a red traceback. The app is multipage (V1 N2): each test opens the page it
 is about.
 """
+import os
 from pathlib import Path
 
 import pytest
 
+os.environ["BEX_MODE"] = "research"     # not whichever mode this store last used
+
 REPO = Path(__file__).resolve().parent.parent
-PAGES = ["home", "label", "explorer", "about", "compare", "survey", "scorecard", "forensics",
+PAGES = ["home", "label", "explorer", "about", "compare", "survey", "scorecard", "forensics", "guided",
          "recordings", "models", "thresholds"]
 
 

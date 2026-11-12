@@ -58,6 +58,47 @@ many recordings and sites.
 
 - **NB** - This app can ingest the Sierra Nevada soundscape (open-source, labelled, 33x1hr recordings with expert birdsong labels) as a demonstration set. See below ('Scoring needs annotations') for instructions.
 
+## Simple mode
+
+BEX's **Simple mode** is one guided page, from a folder of recordings to
+checked detections: `bex app` opens on it for a new install (a store that
+already has datasets opens in Research mode, the full BEX; switch any time
+from the top bar). Six steps, each a button in the bar across the top:
+
+1. **Recordings**: a folder of audio (files stay where they are).
+2. **Model**: use an existing run, or run a new one. Perch by default
+   (Apache-2.0; run with its softmax readout, whose scores spread out).
+   BirdNET works too, with a licence note: its weights are non-commercial.
+3. **Species**: each window's top three species. Those on the region's
+   species list are ticked; give each a common name. Species the model was
+   confident about but that aren't on the list are shown apart, as
+   **unexpected**: tick one to review it yourself. Low-scoring off-list
+   species are folded away as probably noise.
+4. **Check**: an overview of every species (dots for the Yes and No still
+   needed), then check detections one at a time (Yes, No, Not sure, with
+   undo) until each species has 5 Yes and 3 No. EcoLabel volunteers each hear
+   3 of the Yeses as examples and are tested on the rest. Species EcoLabel's
+   shared library already covers need fewer, or none. A label set made in
+   Research mode can count too.
+5. **Recall**: your answers calibrate the model's scores, so "aim for 80%
+   recall" becomes a score floor, with an estimate of the false detections per
+   100 that costs. (Tested against SNE's expert labels: aiming for 80% gave
+   79%, with 18 false per 100 against an estimate of 16.)
+6. **Export**: download the kept detections as a CSV, or send them to
+   [EcoLabel](https://github.com/donora), where volunteers check detections by
+   ear on their phones: choose a survey protocol (with its cost in volunteer
+   answers), describe the project, optionally share your confirmed clips with
+   EcoLabel's species library (under its published terms), and upload a bundle (short clips around
+   each detection, never whole recordings or coordinates) with your EcoLabel
+   access key. It arrives as a draft for you to launch.
+
+Sending to EcoLabel from the command line, once steps 1 to 5 and the project description are done in the app:
+
+```bash
+bex export-ecolabel my-site                 # -> my-site.ecolabel.zip
+bex upload my-site.ecolabel.zip --key …     # resumable; or set ECOLABEL_KEY
+```
+
 ## Install
 
 Python 3.12. Developed and tested on macOS (Apple silicon).

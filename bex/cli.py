@@ -7,6 +7,8 @@
     bex survey DATASET --setup NAME    # a saved setup's species lists, as CSV
     bex labels DATASET                 # label sets: progress, versions
     bex init [DIR]                     # start a project folder: writes bex.toml
+    bex export-ecolabel DATASET        # an EcoLabel bundle (the app's EcoLabel page sets it up)
+    bex upload BUNDLE --key KEY        # send a bundle to an EcoLabel server
     bex app                            # open the app in your browser
 
 Every subcommand reads `bex.toml` (or the file in $BEX_CONFIG) and prints
@@ -85,9 +87,44 @@ def main(argv: list[str] | None = None) -> int:
     p_init = sub.add_parser("init", help="start a project folder: write a bex.toml there")
     p_init.add_argument("dir", nargs="?", default=".", help="folder (default: here)")
 
+    p_ex = sub.add_parser("export-ecolabel",
+                          help="build an EcoLabel bundle from a dataset's EcoLabel settings and checks")
+    p_ex.add_argument("dataset")
+    p_ex.add_argument("--out", default=".", help="folder to write the bundle into (default: here)")
+    p_ex.add_argument("--no-zip", action="store_true", help="leave the bundle as a folder")
+
+    p_up = sub.add_parser("upload", help="send an EcoLabel bundle (.zip) to an EcoLabel server")
+    p_up.add_argument("bundle", help="the .ecolabel.zip file")
+    p_up.add_argument("--server", default=os.environ.get("ECOLABEL_SERVER", "http://localhost:8000"))
+    p_up.add_argument("--key", default=os.environ.get("ECOLABEL_KEY", ""),
+                      help="your EcoLabel access key (or set ECOLABEL_KEY)")
+
     args = parser.parse_args(argv)
     if args.command == "init":
         return _init(Path(args.dir))
+    if args.command == "upload":
+        from . import ecolabel
+        if not args.key:
+            print("upload needs your EcoLabel access key: --key, or ECOLABEL_KEY")
+            return 2
+        last = [-1]
+
+        def show(frac: float, msg: str) -> None:
+            pct = int(frac * 100)
+            if pct // 5 != last[0]:
+                last[0] = pct // 5
+                print(f"  {msg}", flush=True)
+        try:
+            r = ecolabel.upload(Path(args.bundle), args.server, args.key, progress=show)
+        except (RuntimeError, OSError) as e:
+            print(f"upload failed: {e}\n(run the same command again to carry on where it stopped)")
+            return 1
+        print(f"uploaded: project {r.get('project')} ({r.get('status')}), "
+              f"{r.get('questions', '?')} candidates, {r.get('ready_species', '?')} of "
+              f"{r.get('species', '?')} species ready for the crowd")
+        if r.get("portal"):
+            print(f"review and launch it in the portal: {r['portal']}")
+        return 0
     cfg = load_config(args.config)
 
     if args.command == "ingest-sne":
@@ -103,6 +140,20 @@ def main(argv: list[str] | None = None) -> int:
                                  audio_root=os.path.abspath(args.dir))
         hours = recordings["duration_s"].sum() / 3600
         print(f"{args.name}: {len(recordings)} recordings, {hours:.1f} h -> {d}")
+
+    elif args.command == "export-ecolabel":
+        from . import ecolabel
+        s = ecolabel.load_settings(cfg.store_dir, args.dataset)
+        if s.get("floor") is None:
+            print("note: no recall target set yet (the app's EcoLabel page): every pool detection is included")
+        r = ecolabel.build_bundle(cfg, args.dataset, Path(args.out),
+                                  progress=lambda f, m: print(f"  {m}") if f in (0.0, 1.0) else None)
+        out = Path(r["folder"])
+        if not args.no_zip:
+            out = ecolabel.zip_bundle(out)
+        print(f"{args.dataset}: {r['candidates']:,} candidates in {r['clips']:,} clips, "
+              f"{r['known_answers']} known answers, {r['references']} examples; "
+              f"{r['ready_species']} of {r['species']} species ready for the crowd -> {out}")
 
     elif args.command == "melcache":
         recordings, _ = ingest.read_dataset(cfg.store_dir, args.dataset)

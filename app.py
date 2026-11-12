@@ -13,8 +13,30 @@ import streamlit as st
 st.set_page_config(page_title="BEX — Bioacoustics Explorer", page_icon="🐦",
                    layout="wide")
 
+def app_mode() -> str:
+    """Simple (the guided path: recordings to checked detections, exported as a
+    file or sent to EcoLabel) or Research (everything else BEX does).
+    A fresh install opens Simple; a store that already has datasets opens
+    Research, so existing users find BEX as they left it. The choice is kept."""
+    import os
+    from bex import prefs
+    from ui.common import cfg, ingest
+    saved = os.environ.get("BEX_MODE") or prefs.get(cfg.store_dir, "mode")
+    if saved in ("simple", "research"):
+        return saved
+    return "research" if ingest.list_datasets(cfg.store_dir) else "simple"
+
+
+def set_mode(mode: str) -> None:
+    from bex import prefs
+    from ui.common import cfg
+    prefs.put(cfg.store_dir, "mode", mode)
+
+
+MODE = app_mode()
 PAGES = {
-    "home": st.Page("ui/pages/home.py", title="Home", icon="🏠", default=True),
+    "home": st.Page("ui/pages/home.py", title="Home", icon="🏠", default=MODE == "research"),
+    "guided": st.Page("ui/pages/guided.py", title="Simple mode", icon="🌿", default=MODE == "simple"),
     "label": st.Page("ui/pages/label.py", title="Label", icon="🏷️"),
     "explorer": st.Page("ui/pages/explorer.py", title="Explorer", icon="🔎"),
     "compare": st.Page("ui/pages/compare.py", title="Compare models"),
@@ -32,10 +54,25 @@ PAGES = {
 page = st.navigation(list(PAGES.values()), position="hidden")
 
 
+def simple_bar() -> None:
+    """Simple mode: one guided page, About, and the way to the rest of BEX."""
+    st.markdown("<style>[data-testid='stMainBlockContainer']{padding-top:3.2rem}</style>",
+                unsafe_allow_html=True)
+    with st.container(key="bex_nav"):
+        a, _, b, c = st.columns([2.2, 4, 1.4, 0.8], vertical_alignment="center")
+        a.page_link(PAGES["guided"], label="**BEX** · Simple mode")
+        if b.button("Research mode ›", help="All of BEX: labelling, the Explorer, comparing models…"):
+            set_mode("research")
+            st.switch_page(PAGES["home"])
+        c.page_link(PAGES["about"], label="About")
+
+
 def nav_bar() -> None:
     """The flow for one dataset, numbered left to right — 1 label, 2 look,
     3 compare, 4 decide — the steps in the accent colour, the current dataset
     named beside them; setting up and About to the right (V1.2 F2)."""
+    if MODE == "simple":
+        return simple_bar()
     from ui.common import brand
     c = brand()
     # The accent pill is the light theme's petrol teal with white text in both
@@ -109,6 +146,10 @@ def nav_bar() -> None:
             st.page_link(PAGES["recordings"], label="Recordings")
             st.page_link(PAGES["models"], label="Models")
             st.page_link(PAGES["thresholds"], label="Thresholds")
+            if st.button("🌿 Simple mode", help="The guided path: recordings, model, species, check, "
+                         "recall, export (a file, or EcoLabel volunteers)"):
+                set_mode("simple")
+                st.switch_page(PAGES["guided"])
         cols[7].page_link(PAGES["about"], label="About")
 
 
