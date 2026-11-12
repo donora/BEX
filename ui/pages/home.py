@@ -11,10 +11,7 @@ def masthead() -> None:
     st.markdown(
         f"<div style='background:linear-gradient(120deg, {c['wash']}, transparent 70%);"
         "border-radius:14px; padding:1.6rem 1.8rem 1.4rem; margin:0.4rem 0 1.2rem'>"
-        "<div style='font-size:4.2rem; font-weight:800; letter-spacing:0.04em; "
-        "line-height:1'>"
-        f"<span style='color:{c['b']}'>B</span><span style='color:{c['ex']}'>EX</span>"
-        "</div>"
+        f"<div>{logo_html(4.2)}</div>"
         "<div style='font-size:1.45rem; font-weight:600; margin-top:0.35rem; "
         "opacity:0.92'>"
         f"<span style='color:{c['b']}'>B</span>ioacoustics "

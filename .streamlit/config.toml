@@ -1,9 +1,20 @@
-# BEX theme: the brand's petrol teal as the accent colour (buttons, sliders,
-# selected options, tags). The dark theme uses a slightly lighter teal, still
-# deep enough for white text on it to stay legible (4.1:1). The palette is
-# described in V1.md (HM1); ui/common.py (BRAND) holds the logo colours.
-[theme.light]
-primaryColor = "#3e6a6b"
-
-[theme.dark]
-primaryColor = "#4f868c"
+# Generated from bex/theme.py (EcoLabel's palettes): edit there, then
+#   .venv/bin/python -c 'from bex import theme; print(theme.config_toml(), end="")' > .streamlit/config.toml
+[theme]
+base = "dark"
+primaryColor = "#8CC79A"
+backgroundColor = "#16211C"
+secondaryBackgroundColor = "#1F2C26"
+textColor = "#ECEADD"
+borderColor = "#33433A"
+dataframeBorderColor = "#33433A"
+dataframeHeaderBackgroundColor = "#1F2C26"
+linkColor = "#8CC79A"
+codeBackgroundColor = "#0B1310"
+greenColor = "#6FAF7E"
+redColor = "#C98468"
+yellowColor = "#D8BB72"
+orangeColor = "#C9AA62"
+violetColor = "#8C78E0"
+grayColor = "#A3AE9F"
+baseRadius = "10px"

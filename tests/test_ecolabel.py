@@ -234,3 +234,33 @@ def test_upload_resumes_where_it_stopped(tmp_path, monkeypatch):
     r = E.upload(f, url, "good", progress=lambda frac, msg: seen.append(frac))
     assert r == {"project": "p1", "status": "draft"} and seen[0] > 0.5   # …and carried on, intact
     srv.shutdown()
+
+
+def test_separated_answers_cannot_run_away(project):
+    """All the Nos below all the Yeses (what the guided check tends to give)
+    used to send the fit to infinity, calling every detection real."""
+    pool = E.candidate_pool(project.store_dir, "demo", RUN)
+    srt = pool.sort("score")
+    for r in srt.head(8).iter_rows(named=True):
+        E.add_check(project.store_dir, "demo", r["recording_id"], r["start_s"], r["species_key"], "no")
+    for r in srt.tail(16).iter_rows(named=True):
+        E.add_check(project.store_dir, "demo", r["recording_id"], r["start_s"], r["species_key"], "yes")
+    checks = E.load_checks(project.store_dir, "demo")
+    for typical in (None, E.typical_for(project.store_dir, RUN)):
+        cal = E.calibration(pool, checks, typical)
+        assert np.isfinite(cal["p"]).all() and 0.05 < cal["p"].mean() < 0.95
+
+
+def test_a_known_model_has_an_estimate_before_any_answers(project):
+    pool = E.candidate_pool(project.store_dir, "demo", RUN)
+    typical = E.typical_for(project.store_dir, RUN)
+    assert typical == E.TYPICAL["perch-softmax"]                 # the fixture is Perch, softmax readout
+    none = E.load_checks(project.store_dir, "demo")
+    assert E.calibration(pool, none, None) is None                # unknown model: answers first
+    cal = E.calibration(pool, none, typical)
+    assert cal["answers"] == 0 and cal["prior_answers"] == E.PRIOR_ANSWERS
+    band = E.recall_band(pool, cal, np.array([0.5, 0.8, 0.95]))
+    assert (band["kept_lo"] <= band["kept_mid"]).all() and (band["kept_mid"] <= band["kept_hi"]).all()
+    assert band["kept_mid"].is_sorted()                           # more recall, more to check
+    lo, hi = E.volunteer_hours(1000)
+    assert 0 < lo < hi

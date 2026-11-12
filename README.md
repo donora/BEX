@@ -76,7 +76,9 @@ from the top bar). Six steps, each a button in the bar across the top:
    species are folded away as probably noise.
 4. **Check**: an overview of every species (dots for the Yes and No still
    needed), then check detections one at a time (Yes, No, Not sure, with
-   undo) until each species has 5 Yes and 3 No. EcoLabel volunteers each hear
+   undo) until each species has 5 Yes and 3 No. Beside each clip you can
+   play your own earlier Yeses, examples from EcoLabel's species library, and
+   links to Xeno-canto and iNaturalist sounds. EcoLabel volunteers each hear
    3 of the Yeses as examples and are tested on the rest. Species EcoLabel's
    shared library already covers need fewer, or none. A label set made in
    Research mode can count too.
@@ -91,6 +93,14 @@ from the top bar). Six steps, each a button in the bar across the top:
    EcoLabel's species library (under its published terms), and upload a bundle (short clips around
    each detection, never whole recordings or coordinates) with your EcoLabel
    access key. It arrives as a draft for you to launch.
+
+**Your own model.** In the Model step, choose *Your own model* for a how-to
+and an example file: run your model however you like, save one table (CSV or
+Parquet) with `recording`, `start_s`, `end_s`, `species` (scientific name) and
+`score` (0 to 1) per window per species, and import it. BEX checks every row
+and says what to fix. From the command line:
+`bex import-detections my-site detections.csv --model mynet`. (For a model BEX
+should run itself each time, write a runner: `envs/README.md`.)
 
 Sending to EcoLabel from the command line, once steps 1 to 5 and the project description are done in the app:
 

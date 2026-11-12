@@ -267,25 +267,48 @@ def build_alignment(run_id: str, dataset: str, grid_name: str,
     bar.empty()
 
 
-INKS = {
-    "light": {"text": "#1d1b17", "label": "#5a5a54", "title": "#3a3a35",
-              "grid": "#ececea", "domain": "#d8d7d2"},
-    "dark": {"text": "#f2f1ec", "label": "#b9b8b0", "title": "#d6d5ce",
-             "grid": "#2c2d33", "domain": "#46474e"},
-}
+# Chart inks and brand colours from EcoLabel's palettes (bex/theme.py): the
+# B of the logo is the primary green, EX the gold accent; each palette has its
+# own, so text and lines read on its page.
+def _inks(c: dict) -> dict:
+    return {"text": c["ink"], "label": c["muted"], "title": c["ink"], "grid": c["line"], "domain": c["line"]}
 
 
-# The BEX palette (V1 HM1): muted, earthy blue-greens. B is a deep petrol teal —
-# also the app's accent colour (.streamlit/config.toml) — EX a soft sage. Each has
-# a lighter twin for a dark theme.
-BRAND = {
-    "light": {"b": "#3e6a6b", "ex": "#6f9a86", "deep": "#2f5657",
-              "wash": "rgba(111,154,134,0.10)", "tint": "rgba(62,106,107,0.08)",
-              "on": "#ffffff"},
-    "dark": {"b": "#7fb0b6", "ex": "#b5d2a6", "deep": "#a7cdd1",
-             "wash": "rgba(127,176,182,0.08)", "tint": "rgba(127,176,182,0.10)",
-             "on": "#10231f"},
-}
+def _brand(c: dict) -> dict:
+    hexa = c["primary"].lstrip("#")
+    r, g, b = (int(hexa[i:i + 2], 16) for i in (0, 2, 4))
+    return {"b": c["primary"], "ex": c["accent"], "deep": c["primary_deep"],
+            "wash": f"rgba({r},{g},{b},0.08)", "tint": f"rgba({r},{g},{b},0.12)", "on": c["on_primary"]}
+
+
+from bex.theme import PALETTES as _PAL  # noqa: E402
+
+INKS = {"light": _inks(_PAL["meadow"]), "dark": _inks(_PAL["evening"])}
+BRAND = {"light": _brand(_PAL["meadow"]), "dark": _brand(_PAL["evening"])}
+
+
+def leaf_svg(size: int, colour: str) -> str:
+    """EcoLabel's leaf (ecolabel/portal/src/components/ui.tsx): the two projects' shared mark."""
+    return (f"<svg width='{size}' height='{size}' viewBox='0 0 24 24' aria-hidden='true' "
+            "style='transform:rotate(-20deg);vertical-align:middle;flex:none'>"
+            "<path d='M12 2.5C6.5 6 4.5 10.5 5.5 15.5c.6 3 3.2 5.5 6.5 6 3.3-.5 5.9-3 6.5-6 1-5-1-9.5-6.5-13z' "
+            f"fill='{colour}'/><path d='M12 6v15' stroke='#fff' stroke-opacity='.6' stroke-width='1.2' "
+            "stroke-linecap='round'/></svg>")
+
+
+def logo_html(size_rem: float = 2.4, tag: str = "") -> str:
+    """The BEX wordmark: the leaf, then B and EX in the brand's two colours,
+    and an optional small tag after it (e.g. "Simple mode")."""
+    c = brand()
+    px = int(size_rem * 16 * 0.95)
+    tag_html = (f"<span style='font-size:{max(0.8, size_rem * 0.34):.2f}rem;font-weight:600;padding:0.15rem 0.6rem;"
+                f"border-radius:999px;background:{c['tint']};color:{c['b']};margin-left:0.7rem;"
+                f"letter-spacing:0.02em'>{tag}</span>" if tag else "")
+    return (f"<span style='display:inline-flex;align-items:center;gap:0.35rem;line-height:1'>"
+            f"{leaf_svg(px, c['b'])}"
+            f"<span style='font-size:{size_rem}rem;font-weight:800;letter-spacing:0.04em'>"
+            f"<span style='color:{c['b']}'>B</span><span style='color:{c['ex']}'>EX</span></span>"
+            f"{tag_html}</span>")
 
 
 def brand() -> dict:

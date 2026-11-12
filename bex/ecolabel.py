@@ -83,7 +83,7 @@ def load_settings(store_dir, dataset: str) -> dict:
     for k, v in (s.get("about") or {}).items():
         if k in about and isinstance(v, dict):
             about[k].update({f: v.get(f, "") for f in about[k]})
-    return {"run_id": "", "included": None, "names": {}, "target_recall": 0.8, "floor": None,
+    return {"run_id": "", "included": None, "names": {}, "researcher_only": [], "target_recall": 0.8, "floor": None,
             "label_ref": "", **s, "about": about, "protocol": {**DEFAULT_PROTOCOL, **(s.get("protocol") or {})}}
 
 
@@ -172,6 +172,7 @@ def species_table(pool: pl.DataFrame, tiers: dict[str, int] | None, names: dict[
     rows = []
     chosen = settings.get("included")
     own = settings.get("names") or {}
+    mine = set(settings.get("researcher_only") or [])
     for r in sp.iter_rows(named=True):
         k = r["species_key"]
         tier = (tiers or {}).get(k, 3) if tiers is not None else None
@@ -182,10 +183,12 @@ def species_table(pool: pl.DataFrame, tiers: dict[str, int] | None, names: dict[
         default = plausible
         rows.append({**r, "tier": tier, "plausible": plausible, "unexpected": unexpected,
                      "name": own.get(k) or names.get(k, ""),
-                     "include": (k in chosen) if chosen is not None else default})
+                     "include": (k in chosen) if chosen is not None else default,
+                     "researcher": k in mine})
     return pl.DataFrame(rows, schema={"species_key": pl.Utf8, "detections": pl.UInt32, "best": pl.Float64,
                                       "occ": pl.Float64, "tier": pl.Int64, "plausible": pl.Boolean,
-                                      "unexpected": pl.Boolean, "name": pl.Utf8, "include": pl.Boolean})
+                                      "unexpected": pl.Boolean, "name": pl.Utf8, "include": pl.Boolean,
+                                      "researcher": pl.Boolean})
 
 
 # ================================================================== checks ===
@@ -290,42 +293,131 @@ def _logit(p):
     return np.log(p / (1 - p))
 
 
-def _platt(x: np.ndarray, y: np.ndarray, iters: int = 60) -> tuple[float, float]:
-    a, b = 1.0, 0.0
+def _platt(x: np.ndarray, y: np.ndarray, w: np.ndarray | None = None, iters: int = 100,
+           ridge: float = 1e-3) -> tuple[float, float, np.ndarray]:
+    """Weighted logistic fit of y on x (y may be fractional): (a, b, the
+    posterior covariance of [a, b]). Newton with step-halving, so perfectly
+    separated answers (all the Nos below all the Yeses, which the guided check
+    tends to produce) can't run away."""
+    w = np.ones_like(y, dtype=float) if w is None else w
+    X = np.c_[x, np.ones_like(x)]
+    th = np.array([1.0, 0.0])
+
+    def nll(t):
+        z = X @ t
+        return float(np.sum(w * (np.logaddexp(0, z) - y * z)) + ridge * t @ t / 2)
+    H = np.eye(2)
     for _ in range(iters):
-        p = 1 / (1 + np.exp(-(a * x + b)))
-        w = p * (1 - p) + 1e-9
-        g = np.array([np.sum((p - y) * x), np.sum(p - y)])
-        h = np.array([[np.sum(w * x * x), np.sum(w * x)], [np.sum(w * x), np.sum(w)]]) + 1e-6 * np.eye(2)
-        step = np.linalg.solve(h, g)
-        a, b = a - step[0], b - step[1]
-        if np.abs(step).max() < 1e-8:
+        p = 1 / (1 + np.exp(-(X @ th)))
+        g = X.T @ (w * (p - y)) + ridge * th
+        H = (X * (w * p * (1 - p))[:, None]).T @ X + ridge * np.eye(2)
+        step = np.linalg.solve(H, g)
+        f0, k = nll(th), 1.0
+        while nll(th - k * step) > f0 and k > 1e-6:
+            k /= 2
+        th = th - k * step
+        if np.abs(k * step).max() < 1e-9:
             break
-    return float(a), float(b)
+    return float(th[0]), float(th[1]), np.linalg.inv(H)
 
 
-def calibrate(pool: pl.DataFrame, checks: pl.DataFrame) -> np.ndarray | None:
-    """Chance each pool detection is real, from the researcher's answers: a
-    logistic fit of the answers on the model's score, then a per-species
-    correction (shrunk towards none) for species the model is over- or
-    under-confident about. None until there are enough answers."""
+#: How each model's score typically turns into "is it real", measured against
+#: expert labels: SNE (Kahl et al. 2022; 33 h, every call boxed), each window's
+#: top 3 on the Sierra Nevada species list (BEX profile us-ca-sierra). Logistic
+#: on logit(score): p = sigmoid(a * logit(score) + b). Reproduce with
+#: scripts/typical_calibration.py.
+#:   Perch v2, softmax readout:  27,043 candidates, 60% real (top 82%, 2nd 45%, 3rd 28%)
+#:   BirdNET 2.4:                95,747 candidates, 34% real (top 58%, 2nd 24%, 3rd 11%)
+TYPICAL = {"perch-softmax": (0.977, 2.459, "Perch (softmax), on expert-labelled Sierra Nevada recordings"),
+           "birdnet": (1.137, -0.527, "BirdNET, on expert-labelled Sierra Nevada recordings")}
+PRIOR_ANSWERS = 30       # the typical curve counts as this many answers; yours outweigh it beyond that
+GENERIC = (1.0, 0.0, "a generic guess (score = chance it's real)")
+GENERIC_ANSWERS = 8      # ...a much weaker one, for models BEX knows nothing about
+SECONDS_PER_ANSWER = 8   # a volunteer hearing a 4 s clip and answering
+
+
+def typical_for(store_dir, run_id: str) -> tuple[float, float, str] | None:
+    """The typical calibration for this run's model, or None (an unknown model,
+    or Perch's saturated sigmoid readout)."""
+    p = Path(store_dir) / "runs" / run_id / "manifest.json"
+    man = json.loads(p.read_text()) if p.exists() else {}
+    name, transform = man.get("model_name", run_id.split("-")[0]), str(man.get("score_transform", ""))
+    if name == "perch":
+        return TYPICAL["perch-softmax"] if transform.startswith("softmax") else None
+    return TYPICAL.get(name)
+
+
+def calibration(pool: pl.DataFrame, checks: pl.DataFrame, typical: tuple | None = None) -> dict | None:
+    """Chance each pool detection is real: a logistic fit of the researcher's
+    answers on the model's score, starting from how the model typically does
+    (`typical`, counted as PRIOR_ANSWERS answers spread over this pool's
+    scores), then a per-species correction (shrunk towards none). With no
+    typical curve, a weak generic one, and at least MIN_CALIBRATION answers.
+
+    Returns {p, a, b, cov, offsets, answers, prior_answers, typical}, or None."""
     known = pool.join(checks.filter(pl.col("verdict") != "unsure").select(*KEY, "verdict"), on=KEY)
-    if known.height < MIN_CALIBRATION or known["verdict"].n_unique() < 2:
+    if typical is None and known.height < MIN_CALIBRATION:
         return None
+    a0, b0, label = typical or GENERIC
+    k = PRIOR_ANSWERS if typical else GENERIC_ANSWERS
+    qs = np.quantile(pool["score"].to_numpy(), (np.arange(k) + 0.5) / k) if pool.height else np.array([])
+    x_prior = _logit(qs)
+    y_prior = 1 / (1 + np.exp(-(a0 * x_prior + b0)))
     y = (known["verdict"] == "yes").to_numpy().astype(float)
-    a, b = _platt(_logit(known["score"].to_numpy()), y)
-    logit_all = a * _logit(pool["score"].to_numpy()) + b
+    x = np.r_[_logit(known["score"].to_numpy()), x_prior]
+    a, b, cov = _platt(x, np.r_[y, y_prior])
     p_known = 1 / (1 + np.exp(-(a * _logit(known["score"].to_numpy()) + b)))
     offsets = {}
     for s in known["species_key"].unique():
         m = (known["species_key"] == s).to_numpy()
         n, exp_yes, obs = m.sum(), p_known[m].sum(), y[m].sum()
         rate = np.clip(exp_yes / n, 1e-3, 1 - 1e-3)
-        k = SPECIES_STRENGTH
-        off = np.log((obs + k * rate) / (n - obs + k * (1 - rate))) - np.log(rate / (1 - rate))
+        kk = SPECIES_STRENGTH
+        off = np.log((obs + kk * rate) / (n - obs + kk * (1 - rate))) - np.log(rate / (1 - rate))
         offsets[s] = float(np.clip(off, -4, 4))
-    logit_all = logit_all + pool["species_key"].replace_strict(offsets, default=0.0).to_numpy()
-    return 1 / (1 + np.exp(-logit_all))
+    off_all = pool["species_key"].replace_strict(offsets, default=0.0, return_dtype=pl.Float64).to_numpy()
+    p = 1 / (1 + np.exp(-(a * _logit(pool["score"].to_numpy()) + b + off_all)))
+    return {"p": p, "a": a, "b": b, "cov": cov, "offsets": off_all, "answers": int(known.height),
+            "yes": int(y.sum()), "no": int(len(y) - y.sum()), "prior_answers": k, "typical": label,
+            "known_typical": typical is not None}
+
+
+def calibrate(pool: pl.DataFrame, checks: pl.DataFrame, typical: tuple | None = None) -> np.ndarray | None:
+    """`calibration(...)["p"]`: the chance each pool detection is real."""
+    c = calibration(pool, checks, typical)
+    return None if c is None else c["p"]
+
+
+def recall_band(pool: pl.DataFrame, cal: dict, recalls: np.ndarray, draws: int = 200,
+                seed: int = 0) -> pl.DataFrame:
+    """How sure the estimate is: for each recall target, the detections that
+    would need checking (and the false ones among them) across plausible
+    calibrations (draws from the fit's uncertainty). Columns: recall, kept_lo,
+    kept_mid, kept_hi, false_lo, false_hi (10th, 50th, 90th percentiles)."""
+    score = pool["score"].to_numpy()
+    order = np.argsort(-score)
+    x = _logit(score[order])
+    off = cal["offsets"][order]
+    rng = np.random.default_rng(seed)
+    ab = rng.multivariate_normal([cal["a"], cal["b"]], cal["cov"], size=draws)
+    kept = np.empty((draws, len(recalls)))
+    false = np.empty((draws, len(recalls)))
+    for i, (a, b) in enumerate(ab):
+        pp = 1 / (1 + np.exp(-(a * x + b + off)))
+        cum = np.cumsum(pp)
+        r = cum / cum[-1]
+        j = np.minimum(np.searchsorted(r, recalls), len(r) - 1)
+        kept[i] = j + 1
+        false[i] = (j + 1) - cum[j]
+    q = lambda m, v: np.percentile(m, v, axis=0)
+    return pl.DataFrame({"recall": recalls, "kept_lo": q(kept, 10), "kept_mid": q(kept, 50), "kept_hi": q(kept, 90),
+                         "false_lo": q(false, 10), "false_hi": q(false, 90)})
+
+
+def volunteer_hours(checks: float) -> tuple[float, float]:
+    """Volunteer time to check this many detections one by one (every call):
+    answers per check (ANSWERS_PER_CHECK) at SECONDS_PER_ANSWER each."""
+    return tuple(checks * a * SECONDS_PER_ANSWER / 3600 for a in ANSWERS_PER_CHECK)
 
 
 def recall_table(pool: pl.DataFrame, p: np.ndarray, points: int = 120) -> pl.DataFrame:
@@ -476,10 +568,11 @@ def audio_path(store_dir, dataset: str, recording_id: str) -> Path:
 
 
 def kept_candidates(pool: pl.DataFrame, species: pl.DataFrame, checks: pl.DataFrame, floor: float | None) -> pl.DataFrame:
-    """What goes in the bundle: included, named species at or above the floor,
-    plus every detection the researcher checked (those become known answers)."""
-    inc = species.filter(pl.col("include"), pl.col("name").str.len_chars() > 0)
-    d = pool.join(inc.select("species_key", "unexpected"), on="species_key")
+    """What goes in the bundle: included, named species at or above the floor
+    (researcher-only ones need no name: they never reach volunteers), plus
+    every detection the researcher checked (those become known answers)."""
+    inc = species.filter(pl.col("include"), (pl.col("name").str.len_chars() > 0) | pl.col("researcher"))
+    d = pool.join(inc.select("species_key", "unexpected", "researcher"), on="species_key")
     checked = d.join(checks.select(KEY), on=KEY, how="semi")
     above = d if floor is None else d.filter(pl.col("score") >= floor)
     return pl.concat([above, checked]).unique(KEY, maintain_order=True).sort("recording_id", "start_s", "species_key")
@@ -534,7 +627,8 @@ def build_bundle(cfg, dataset: str, out_dir: Path, progress=None) -> dict:
         if progress and i % 200 == 0:
             progress(i / max(1, todo.height), f"Cutting clips: {i:,} of {todo.height:,}")
     cand.select("candidate_id", "recording_id", "start_s", "end_s", "species_key", "score", "rank", "model",
-                "clip", occ_score="occ", unexpected="unexpected").write_parquet(out / "candidates.parquet")
+                "clip", occ_score="occ", unexpected="unexpected",
+                researcher_only="researcher").write_parquet(out / "candidates.parquet")
 
     # Known answers: the guided check, plus a label set's closed chunks if chosen.
     ck = (cand.join(checks.filter(pl.col("verdict") != "unsure"), on=KEY)
@@ -684,6 +778,27 @@ def library_coverage(server: str) -> dict[str, dict]:
         return _get_json(server.rstrip("/") + "/api/library/coverage").get("species", {})
     except (OSError, ValueError):
         return {}
+
+
+def library_examples(server: str, species_key: str, n: int = 3) -> list[dict]:
+    """Example calls of a species from EcoLabel's shared library, with full
+    URLs to play (audio, image) and each one's credit; [] when the server
+    can't be reached or has none."""
+    from urllib.parse import quote
+    base = server.rstrip("/")
+    try:
+        got = _get_json(f"{base}/api/library/examples?species={quote(species_key)}&n={n}")
+    except (OSError, ValueError):
+        return []
+    return [{**e, "audio": base + e["audio"], "image": base + e["image"]} for e in got.get("examples", [])]
+
+
+def reference_links(species_key: str) -> dict[str, str]:
+    """Where to hear a species elsewhere, for any animal: Xeno-canto (birds,
+    frogs, grasshoppers, bats and more) and iNaturalist's sound observations."""
+    from urllib.parse import quote
+    return {"Xeno-canto": "https://xeno-canto.org/species/" + species_key.replace(" ", "-"),
+            "iNaturalist sounds": f"https://www.inaturalist.org/observations?taxon_name={quote(species_key)}&sounds=true"}
 
 
 def library_terms(server: str) -> dict | None:

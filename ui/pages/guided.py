@@ -5,24 +5,25 @@ this is the walk-through).
     1 Recordings → 2 Model → 3 Species → 4 Check → 5 Recall → 6 Export
 """
 import hashlib
-import math
 import time
 from pathlib import Path
 
 import altair as alt
+import numpy as np
 import polars as pl
 import streamlit as st
 
 from bex import ecolabel as E
-from bex import flow, ingest, labels, prefs, repair, runners
+from bex import flow, ingest, labels, prefs, repair, runners, theme
 from bex.profiles import suggest_profile
 from ui.common import cfg, get_dataset, ordered_datasets
 
 STEPS = ["Recordings", "Model", "Species", "Check", "Recall", "Export"]
 NEW = "➕ New project from a folder…"
-ACCENT, ACCENT_DEEP = "#3e6a6b", "#2f5657"
-DONE = "#3f9a52"            # the ticks: readable on light and dark pages
-WARN = "#c98a1a"
+COL = theme.colours()        # EcoLabel's palette (bex/theme.py)
+ACCENT, ACCENT_DEEP, ON_ACCENT = COL["primary"], COL["primary_deep"], COL["on_primary"]
+DONE = COL["yes"]            # the ticks
+WARN = COL["accent"]
 CHECK_VIEWS = ["Overview", "Checking", "Your answers"]
 
 
@@ -117,8 +118,8 @@ def stepper(d: str | None, current: str) -> None:
     for i, name in enumerate(STEPS):
         sel = f".st-key-eco_st_{i} button"
         if name == current:
-            css.append(f"{sel}{{background:{ACCENT};border-color:{ACCENT};color:#fff}}"
-                       f"{sel} *{{color:#fff !important}}{sel}:hover{{background:{ACCENT_DEEP}}}")
+            css.append(f"{sel}{{background:{ACCENT};border-color:{ACCENT};color:{ON_ACCENT}}}"
+                       f"{sel} *{{color:{ON_ACCENT} !important}}{sel}:hover{{background:{ACCENT_DEEP}}}")
         elif done[name]:
             css.append(f"{sel}{{background:{DONE}1f;border-color:{DONE}88}}{sel} *{{color:{DONE} !important}}")
     st.markdown(f"<style>{''.join(css)}</style>", unsafe_allow_html=True)
@@ -264,8 +265,15 @@ def step_model(d: str) -> None:
     st.caption("Adds another run to the list above; it doesn't replace them. When it finishes, it's selected."
                if runs else "Scores every recording for every species the model knows.")
     have = runners.available()
-    model = st.radio("Model", [m for m in ("perch", "birdnet") if m in runners.known()], horizontal=True,
-                     format_func=lambda m: "Perch (recommended)" if m == "perch" else "BirdNET (non-commercial licence)")
+    names = {"perch": "Perch (recommended)", "birdnet": "BirdNET (non-commercial licence)",
+             OWN: "Your own model"}
+    model = st.radio("Model", [m for m in ("perch", "birdnet") if m in runners.known()] + [OWN], horizontal=True,
+                     format_func=lambda m: names.get(m, m))
+    if model == OWN:
+        own_model(d, recs)
+        nav("Recordings", "Species", ok=bool(s["run_id"]) and bool(runs),
+            why="Run or import a model first.")
+        return
     if E.model_licence(model):
         st.caption("⚠️ " + E.model_licence(model))
     j = runners.job(cfg.store_dir, d, model)
@@ -293,42 +301,155 @@ def step_model(d: str) -> None:
         why="Run a model first (or wait for it to finish).")
 
 
+OWN = "own"
+
+
+def own_model(d: str, recs: pl.DataFrame) -> None:
+    """Import another model's detections: the how-to, a template, the upload."""
+    from bex import byom
+    with st.container(border=True):
+        st.markdown(byom.HOWTO)
+        st.download_button("Download an example file (CSV)", byom.template(recs["path"].to_list()),
+                           file_name="detections-example.csv", mime="text/csv")
+    a, b, c = st.columns([2, 1, 1])
+    name = a.text_input("Model name", placeholder="e.g. mynet", key=f"eco_own_name_{d}")
+    ver = b.text_input("Version", "1", key=f"eco_own_ver_{d}")
+    win = c.number_input("Window (s)", 0.0, 60.0, 0.0, 0.5, key=f"eco_own_win_{d}",
+                         help="Only if your table has no end column")
+    up = st.file_uploader("Your detections (CSV or Parquet)", type=["csv", "parquet"], key=f"eco_own_up_{d}")
+    path = st.text_input("…or, for a big file, its path on this computer", key=f"eco_own_path_{d}",
+                         placeholder="/path/to/detections.parquet")
+    if st.button("Import", type="primary", disabled=not (name.strip() and (up or path.strip()))):
+        try:
+            with st.spinner("Checking every row…"):
+                table = byom.read_table(up.getvalue() if up else path.strip())
+                r = byom.import_detections(cfg.store_dir, d, table, name, ver, win or None)
+        except byom.ImportProblem as err:
+            st.error(f"Nothing imported yet; fix these and try again:\n\n{err}")
+        except (OSError, pl.exceptions.PolarsError) as err:
+            st.error(f"Couldn't read the file: {err}")
+        else:
+            save(d, run_id=r["run_id"], floor=None)
+            st.session_state.pop(f"eco_run_{d}", None)
+            st.session_state["eco_flash"] = (
+                f"Imported **{r['model_name']}**: {r['rows']:,} detections over {r['recordings']} of "
+                f"{r['of_recordings']} recordings, {r['species']} species, {r['window_s']:g} s windows. "
+                "It's selected above." + "".join(f"\n\n⚠️ {w}" for w in r["warnings"]))
+            st.rerun()
+
+
 # ---------------------------------------------------------------- species ---
-def _shade(values, top: float, log: bool = False) -> list[str]:
-    """One hue, light to dark, by magnitude: a tint behind the number, so the
-    text keeps its own colour in either theme."""
-    out = []
-    for v in values:
-        if v is None or (isinstance(v, float) and math.isnan(v)):
-            out.append("")
+def best_pips(best: float, cuts: list[float]) -> str:
+    """Five pips (the Check table's) for how sure the model's best detection
+    is, against the other species in this run (scores differ so much between
+    models that a fixed scale says little), then the score."""
+    n = 1 + sum(best >= c for c in cuts)
+    return (f"<span title='Best score {best:.3f}'>" + pip_row(n, 0, 5, "yes")
+            + f"</span><span class='eco-num'>{best:.2f}</span>")
+
+
+def count_bar(n: int, top: int) -> str:
+    w = 100 * n / max(top, 1)
+    return (f"<div class='eco-bar'><div style='width:{max(w, 1.5):.1f}%'></div>"
+            f"<span class='eco-num'>{n:,}</span></div>")
+
+
+ROW_CSS = (
+    "<style>.eco-bar{display:flex;align-items:center;gap:8px}"
+    f".eco-bar>div{{height:10px;border-radius:5px;background:{COL['primary']};opacity:0.85}}"
+    ".eco-num{font-size:0.85rem;opacity:0.8;margin-left:6px;font-variant-numeric:tabular-nums}"
+    "[class*='st-key-eco_sprow_']{border-bottom:1px solid rgba(128,128,128,0.15)}"
+    "[class*='st-key-eco_sprow_'] [data-testid='stTextInput'] input{padding:0.25rem 0.5rem}"
+    # "Researcher only": EcoLabel's researcher purple, for the column head and its boxes.
+    f".eco-ro-head{{color:{COL['researcher']};font-weight:700;font-size:0.85rem}}"
+    f"[class*='_ro_'] label > span:first-of-type{{border-color:{COL['researcher']} !important}}"
+    f"[class*='_ro_'] label:has(input:checked) > span:first-of-type{{background-color:{COL['researcher']} !important}}"
+    "</style>")
+PAGE = 50
+
+
+RESEARCHER_HELP = "Only you check this species, in the EcoLabel portal: it never goes to volunteers"
+
+
+def ro_key(key: str, species_key: str) -> str:
+    return f"{key}_ro_{hashlib.md5(species_key.encode()).hexdigest()[:10]}"
+
+
+def species_rows(frame: pl.DataFrame, key: str, tick_label: str, tick_help: str, top_n: int,
+                 cuts: list[float], researcher_col: bool = True):
+    """The species as rows, styled like the Check overview: a tick, the common
+    name (editable), the scientific name, detections as a bar, and the best
+    score as pips. Long lists show PAGE at a time. Returns a pandas frame of
+    include / name / species_key / detections, for every species in `frame`
+    (rows not shown keep their saved values)."""
+    st.markdown(PIP_CSS + ROW_CSS, unsafe_allow_html=True)
+    widths = [0.55] + ([0.8] if researcher_col else []) + [2.0, 2.0, 2.2, 1.6]
+    head = st.columns(widths, vertical_alignment="center")
+    labels = [tick_label] + (["Researcher only"] if researcher_col else []) + [
+        "Common name", "Species", "Detections", "Best score"]
+    for h, c in zip(labels, head):
+        if h == "Researcher only":
+            c.markdown(f"<span class='eco-ro-head' title='{RESEARCHER_HELP}'>Researcher only</span>",
+                       unsafe_allow_html=True)
             continue
-        x = (math.log1p(v) / math.log1p(top)) if log else (v / top)
-        x = max(0.0, min(1.0, x))
-        out.append(f"background-color: rgba(62,106,107,{0.06 + 0.52 * x:.2f})")
-    return out
+        c.caption(h, help=tick_help if h == tick_label else
+                  ("How sure the model's best detection of it is: five pips for the surest fifth of species in "
+                   "this run, one for the least sure" if h == "Best score" else None))
+    shown = st.session_state.get(f"{key}_n", PAGE)
+    out = []
+    for i, r in enumerate(frame.iter_rows(named=True)):
+        k = r["species_key"]
+        h = hashlib.md5(k.encode()).hexdigest()[:10]
+        ik, nk, rk = f"{key}_inc_{h}", f"{key}_nm_{h}", ro_key(key, k)
+        if i < shown:
+            with st.container(key=f"eco_sprow_{key}_{h}"):
+                c = iter(st.columns(widths, vertical_alignment="center"))
+                # A saved value only when the box isn't already in the session (the
+                # "fewer than" tool sets them), or Streamlit warns about both.
+                v = lambda k_, default: {} if k_ in st.session_state else {"value": default}
+                next(c).checkbox("include", key=ik, label_visibility="collapsed", **v(ik, bool(r["include"])))
+                if researcher_col:
+                    next(c).checkbox("researcher only", key=rk, label_visibility="collapsed",
+                                     help=RESEARCHER_HELP, **v(rk, bool(r["researcher"])))
+                next(c).text_input("name", key=nk, label_visibility="collapsed", placeholder="add a common name",
+                                   **v(nk, r["name"] or ""))
+                next(c).markdown(f"<span class='eco-sci'>{k}</span>", unsafe_allow_html=True)
+                next(c).markdown(count_bar(r["detections"], top_n), unsafe_allow_html=True)
+                next(c).markdown(best_pips(r["best"], cuts), unsafe_allow_html=True)
+        mine = researcher_col and bool(st.session_state.get(rk, r["researcher"]))
+        out.append({"include": bool(st.session_state.get(ik, r["include"])) or mine,
+                    "researcher": mine,
+                    "name": st.session_state.get(nk, r["name"] or ""), "species_key": k,
+                    "detections": r["detections"]})
+    if frame.height > shown:
+        st.button(f"Show {min(PAGE, frame.height - shown)} more (of {frame.height - shown} not shown)",
+                  key=f"{key}_more", on_click=lambda: st.session_state.update({f"{key}_n": shown + PAGE}))
+    import pandas as pd
+    return pd.DataFrame(out, columns=["include", "researcher", "name", "species_key", "detections"])
 
 
-def species_editor(frame: pl.DataFrame, key: str, tick_label: str, tick_help: str, top_n: int):
-    df = frame.select("include", "name", "species_key", "detections", "best").to_pandas()
-    styled = (df.style.apply(lambda c: _shade(c, 1.0), subset=["best"])
-              .apply(lambda c: _shade(c, max(top_n, 1), log=True), subset=["detections"]))
-    return st.data_editor(
-        styled, hide_index=True, width="stretch", key=key, height=min(560, 38 + 35 * max(1, frame.height)),
-        column_config={
-            "include": st.column_config.CheckboxColumn(tick_label, help=tick_help, width="small"),
-            "name": st.column_config.TextColumn("Common name", help="What volunteers see"),
-            "species_key": st.column_config.TextColumn("Species", disabled=True),
-            "detections": st.column_config.NumberColumn("Detections", disabled=True, format="%d",
-                                                        help="Windows where it's among the top 3 (darker: more)"),
-            "best": st.column_config.NumberColumn("Best score", format="%.2f", disabled=True,
-                                                  help="The model's most confident detection (darker: surer)")})
+def mark_researcher(d: str, frame: pl.DataFrame, few: int) -> None:
+    """Tick "Researcher only" for the species you're keeping (ticked) that have
+    fewer than `few` detections. Unticked ones stay out: most are noise."""
+    n = 0
+    for r in frame.filter(pl.col("detections") < few).iter_rows(named=True):
+        h = hashlib.md5(r["species_key"].encode()).hexdigest()[:10]
+        for key in (f"eco_sp_{d}", f"eco_low_{d}"):
+            if st.session_state.get(f"{key}_inc_{h}", r["include"] if key == f"eco_sp_{d}" or r["include"] else False):
+                st.session_state[ro_key(key, r["species_key"])] = True
+                n += 1
+                break
+    st.session_state["eco_flash_toast"] = f"{n} species marked researcher only. Save to keep it."
 
 
 def step_species(d: str) -> None:
+    if (msg := st.session_state.pop("eco_flash_toast", None)):
+        st.toast(msg)
     s = settings(d)
     sp = species_for(d, s)
     tiers, _ = names_and_tiers(d)
     top_n = int(sp["detections"].max() or 1)
+    cuts = [float(x) for x in np.quantile(sp["best"].to_numpy(), [0.2, 0.4, 0.6, 0.8])] if sp.height else []
     main = sp.filter(pl.col("plausible"))
     unexpected = sp.filter(pl.col("unexpected"))
     low = sp.filter(~pl.col("plausible") & ~pl.col("unexpected"))
@@ -337,9 +458,16 @@ def step_species(d: str) -> None:
     st.caption(("Ticked species go to volunteers. " if tiers is not None else
                 "No regional species list covers this location, so everything is listed: **untick anything that "
                 "can't be here.** ")
-               + "Each needs a common name (what volunteers see): add any that are missing. Darker cells: more "
-                 "detections, or a surer best score.")
-    ed_main = species_editor(main, f"eco_sp_{d}", "Check", "Ask volunteers about this species", top_n)
+               + "Each needs a common name (what volunteers see): add any that are missing. Bars: how many "
+                 "detections; pips: how sure its best one is.")
+    t1, t2, t3, _ = st.columns([2.6, 0.9, 1.1, 3], vertical_alignment="center")
+    t1.markdown(f"<span class='eco-ro-head'>Researcher checks</span> species with fewer than",
+                unsafe_allow_html=True)
+    few = t2.number_input("detections", 1, 1000, 5, key=f"eco_few_{d}", label_visibility="collapsed")
+    t3.button("Apply", key=f"eco_few_go_{d}", help="Ticks “Researcher only” for the species you're keeping "
+              "that have fewer detections than this (it doesn't untick any)",
+              on_click=mark_researcher, args=(d, pl.concat([main, low]), int(few)))
+    ed_main = species_rows(main, f"eco_sp_{d}", "Check", "Ask volunteers about this species", top_n, cuts)
 
     ed_ux = None
     if unexpected.height:
@@ -351,7 +479,8 @@ def step_species(d: str) -> None:
                         "but they **aren't on this region's list**. Most are mistakes, often a similar-sounding "
                         "species; one could be a real surprise worth recording. Tick any you want to look at: "
                         "they come to **you** in the EcoLabel portal, never to volunteers.")
-            ed_ux = species_editor(unexpected, f"eco_ux_{d}", "Look at it", "Send to you, not to volunteers", top_n)
+            ed_ux = species_rows(unexpected, f"eco_ux_{d}", "Look at it", "Send to you, not to volunteers",
+                                 top_n, cuts, researcher_col=False)
 
     ed_low = None
     if low.height:
@@ -359,21 +488,24 @@ def step_species(d: str) -> None:
             st.caption(f"The model never scored these above {E.UNEXPECTED_SCORE:.1f}, and the region's list says "
                        "they're unlikely. Tick one only if you know it's here: it then goes to volunteers, like "
                        "the list above.")
-            ed_low = species_editor(low, f"eco_low_{d}", "Check", "Ask volunteers about this species", top_n)
+            ed_low = species_rows(low, f"eco_low_{d}", "Check", "Ask volunteers about this species", top_n, cuts)
 
     frames = [f for f in (ed_main, ed_ux, ed_low) if f is not None]
-    crowd = [f for f in (ed_main, ed_low) if f is not None]
+    crowd = [f[~f["researcher"]] for f in (ed_main, ed_low) if f is not None]
     inc_crowd = sum(int(f["include"].sum()) for f in crowd)
     det = sum(int(f[f["include"]]["detections"].sum()) for f in crowd)
-    unnamed = sum(int((f[f["include"]]["name"].fillna("").str.strip() == "").sum()) for f in frames)
+    unnamed = sum(int((f[f["include"]]["name"].fillna("").str.strip() == "").sum()) for f in crowd)
     n_ux = int(ed_ux["include"].sum()) if ed_ux is not None else 0
+    n_ro = sum(int(f["researcher"].sum()) for f in (ed_main, ed_low) if f is not None)
     st.caption(f"{inc_crowd} species for volunteers, {det:,} detections"
+               + (f"; {n_ro} researcher only" if n_ro else "")
                + (f"; {n_ux} unexpected for you" if n_ux else "") + "."
                + (f" ⚠️ {unnamed} ticked without a name won't be included." if unnamed else ""))
     if st.button("Save the species list", type="primary"):
         names = {k: v.strip() for f in frames for k, v in zip(f["species_key"], f["name"].fillna("")) if v.strip()}
         included = [k for f in frames for k in f[f["include"]]["species_key"]]
-        save(d, included=included, names=names, floor=None)
+        mine = [k for f in frames for k in f[f["researcher"]]["species_key"]]
+        save(d, included=included, names=names, researcher_only=mine, floor=None)
         st.toast("Saved")
         go("Check")
         st.rerun()
@@ -383,7 +515,8 @@ def step_species(d: str) -> None:
 # ------------------------------------------------------------------ check ---
 def check_state(d: str, s: dict):
     pool = pool_for(d, s["run_id"])
-    sp = species_for(d, s).filter(pl.col("include"), pl.col("name").str.len_chars() > 0, ~pl.col("unexpected"))
+    sp = species_for(d, s).filter(pl.col("include"), pl.col("name").str.len_chars() > 0, ~pl.col("unexpected"),
+                                  ~pl.col("researcher"))
     checks = E.load_checks(cfg.store_dir, d)
     keys = sp["species_key"].to_list()
     left = (pool.filter(pl.col("species_key").is_in(keys)).join(checks.select(E.KEY), on=E.KEY, how="anti")
@@ -399,7 +532,8 @@ def check_state(d: str, s: dict):
 PIP_CSS = (
     "<style>.pip{display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:4px;"
     "vertical-align:middle;border:1.5px solid rgba(128,128,128,0.55);box-sizing:border-box}"
-    ".pip.yes{background:#0E8A6A;border-color:#0E8A6A}.pip.no{background:#C9533B;border-color:#C9533B}"
+    f".pip.yes{{background:{COL['yes']};border-color:{COL['yes']}}}"
+    f".pip.no{{background:{COL['no']};border-color:{COL['no']}}}"
     ".pip.lib{opacity:0.4}.pip-gap{display:inline-block;width:14px}"
     ".pip-legend{font-size:0.85rem;opacity:0.85;margin:0.2rem 0 0.6rem}.pip-legend .pip{margin-right:2px}"
     ".eco-sci{font-size:0.8rem;opacity:0.65;font-style:italic}"
@@ -554,6 +688,7 @@ def check_one(d: str, pool: pl.DataFrame, checks: pl.DataFrame, ready: pl.DataFr
             st.success("Ready for volunteers. More answers still sharpen the recall estimate.")
         st.caption("Not sure? Say so: only clear answers count. A species you can't finish comes to you in the "
                    "portal instead of going to volunteers.")
+        compare(d, key, pool, checks)
     with a:
         if c is None:
             st.info("You've seen every detection of this species.")
@@ -571,6 +706,40 @@ def check_one(d: str, pool: pl.DataFrame, checks: pl.DataFrame, ready: pl.DataFr
         x2.button("No", width="stretch", on_click=answer, args=(d, c, key, "no"))
         x3.button("Not sure", width="stretch", on_click=answer, args=(d, c, key, "unsure"),
                   help="Faint, buried, or you can't tell: only clear answers count")
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def library_examples(server: str, species_key: str) -> list[dict]:
+    return E.library_examples(server, species_key)
+
+
+def compare(d: str, key: str, pool: pl.DataFrame, checks: pl.DataFrame) -> None:
+    """Calls to compare with: your own Yeses, EcoLabel's library, and links out."""
+    st.markdown("**Compare with**")
+    own = (checks.filter(pl.col("species_key") == key, pl.col("verdict") == "yes")
+           .join(pool.select(*E.KEY, "end_s", "score"), on=E.KEY).sort("score", descending=True).head(3))
+    lib = library_examples(server_url(), key)
+    mine, theirs, elsewhere = st.tabs([f"Your Yes ({own.height})", f"📚 Library ({len(lib)})", "Elsewhere"])
+    with mine:
+        if own.height == 0:
+            st.caption("Answer Yes to a clear call and it appears here, to compare the next ones with.")
+        for r in own.iter_rows(named=True):
+            src = E._readable(cfg.store_dir, d, r["recording_id"], E.audio_path(cfg.store_dir, d, r["recording_id"]))
+            wav, png = clip_media(str(src), max(0.0, r["start_s"] - 0.5), r["end_s"] + 0.5, r["start_s"], r["end_s"])
+            st.image(png, width="stretch")
+            st.audio(wav, format="audio/wav")
+    with theirs:
+        if not lib:
+            st.caption("EcoLabel's species library has no examples of this one yet (or the server isn't "
+                       "reachable).")
+        for e in lib:
+            st.image(e["image"], width="stretch")
+            st.audio(e["audio"], format="audio/mpeg")
+            st.caption(f"From {e['credit']} ({e['licence'].upper()})")
+    with elsewhere:
+        st.markdown("  \n".join(f"[{name} ↗]({url})" for name, url in E.reference_links(key).items()))
+        st.caption("Recordings by others, on their sites. Useful for hearing the species, but they can't count "
+                   "as examples here.")
 
 
 def check_answers(d: str, checks: pl.DataFrame, ready: pl.DataFrame) -> None:
@@ -622,40 +791,70 @@ def step_check(d: str) -> None:
 
 
 # ----------------------------------------------------------------- recall ---
+@st.cache_data(show_spinner=False)
+def recall_curve(dataset: str, run_id: str, species: tuple, answers: tuple, _inc: pl.DataFrame,
+                 _checks: pl.DataFrame):
+    """The calibration and the cost curve: detections to check (real and
+    false) for each recall target, with a likely range. Cached on what it
+    depends on (the leading arguments)."""
+    cal = E.calibration(_inc, _checks, E.typical_for(cfg.store_dir, run_id))
+    if cal is None:
+        return None, None, None
+    tab = E.recall_table(_inc, cal["p"], points=400)
+    grid = np.round(np.arange(0.30, 0.996, 0.01), 3)
+    band = E.recall_band(_inc, cal, grid)
+    rows = []
+    for r, lo, hi in zip(grid, band["kept_lo"], band["kept_hi"]):
+        x = E.floor_for_recall(tab, float(r))
+        h = E.volunteer_hours(x["kept"])
+        rows.append({"recall": float(r), "kept": x["kept"], "real": x["expected_real"],
+                     "false": x["kept"] - x["expected_real"], "lo": lo, "hi": hi,
+                     "hours": f"{h[0]:,.0f}–{h[1]:,.0f} h"})
+    return cal, tab, pl.DataFrame(rows)
+
+
 def step_recall(d: str) -> None:
+    from ui.recall_chart import cost_chart
     st.markdown("#### How much to keep")
     s = settings(d)
     pool = pool_for(d, s["run_id"])
     sp = species_for(d, s)
     checks = E.load_checks(cfg.store_dir, d)
-    inc = pool.join(sp.filter(pl.col("include"), pl.col("name").str.len_chars() > 0).select("species_key"),
-                    on="species_key")
-    p = E.calibrate(inc, checks)
-    if p is None:
-        st.info(f"Check at least {E.MIN_CALIBRATION} detections (Yes and No) in step 4 first: your answers are what "
-                "turn the model's scores into an estimate of recall.")
+    named = sp.filter(pl.col("include"), pl.col("name").str.len_chars() > 0)
+    inc = pool.join(named.select("species_key"), on="species_key")
+    cal, tab, curve = recall_curve(d, s["run_id"], tuple(named["species_key"]),
+                                   (checks.height, str(checks["at"].max())), inc, checks)
+    if cal is None:
+        st.info(f"Check at least {E.MIN_CALIBRATION} detections (Yes and No) in step 4 first: BEX doesn't know how "
+                "this model usually does, so your answers are all it has to turn scores into recall.")
         nav("Check", "Export", ok=False)
         return
-    tab = E.recall_table(inc, p)
-    st.markdown("Aim high for **recall** (finding the calls that are there); the false detections that come with "
-                "it get weeded out by checking (yours, or EcoLabel volunteers').")
+    st.markdown("Every extra bit of **recall** (the share of real calls kept) costs more detections to check, and "
+                "near the top the cost climbs steeply: the last calls hide among many false detections.")
     target = st.slider("Aim for recall of", 50, 99, int(round(100 * float(s.get("target_recall") or 0.8))), 1,
                        format="%d%%", help="Of the calls the model can find at all.") / 100
     row = E.floor_for_recall(tab, target)
+    here = curve.filter((pl.col("recall") - target).abs() < 0.005)
+    lo, hi = (int(here["lo"][0]), int(here["hi"][0])) if here.height else (row["kept"], row["kept"])
+    h = E.volunteer_hours(row["kept"])
+    false = row["kept"] - row["expected_real"]
     m1, m2, m3 = st.columns(3)
-    m1.metric("Detections kept", f"{row['kept']:,}")
-    m2.metric("False ones per 100", f"{row['false_per_100']:.0f}", help="Estimated from your answers")
-    m3.metric("Real calls found", f"{row['recall']:.0%}", help=f"About {row['expected_real']:,.0f} real calls")
-    chart = (alt.Chart(tab.to_pandas()).mark_line(strokeWidth=2, color=ACCENT)
-             .encode(x=alt.X("recall:Q", title="Recall (share of real calls kept)", axis=alt.Axis(format="%")),
-                     y=alt.Y("false_per_100:Q", title="False detections per 100 kept"),
-                     tooltip=[alt.Tooltip("recall:Q", format=".0%"), alt.Tooltip("false_per_100:Q", format=".0f"),
-                              alt.Tooltip("kept:Q", format=",", title="detections")]))
-    dot = alt.Chart(pl.DataFrame([row]).to_pandas()).mark_point(size=120, filled=True, color=ACCENT).encode(
-        x="recall:Q", y="false_per_100:Q")
-    st.altair_chart(chart + dot, width="stretch")
-    st.caption(f"Model score floor: {row['floor']:.3f}. Estimated from {checks.filter(pl.col('verdict') != 'unsure').height} "
-               "of your answers; checking more makes it surer. Recall here is of the calls the model detects at all: "
+    m1.metric("Detections to check", f"{row['kept']:,}", help=f"Likely between {lo:,} and {hi:,}")
+    m2.metric("False ones among them", f"{false:,.0f}", help=f"{row['false_per_100']:.0f} in every 100",
+              delta=f"{row['false_per_100']:.0f} per 100", delta_color="off")
+    m3.metric("Volunteer time", f"{h[0]:,.0f}–{h[1]:,.0f} h",
+              help=f"Checking every detection, at {E.ANSWERS_PER_CHECK[0]:g}–{E.ANSWERS_PER_CHECK[1]:g} answers "
+                   f"each and about {E.SECONDS_PER_ANSWER} s an answer. A lighter protocol (step 6) needs far fewer.")
+    st.altair_chart(cost_chart(curve, target, row["kept"], COL), width="stretch")
+    st.caption("Dashed lines: the likely range (10th to 90th percentile).")
+    basis = (f"Estimated from how **{cal['typical']}** typically does (counted as {cal['prior_answers']} answers) "
+             f"and your **{cal['answers']} answers** ({cal['yes']} Yes, {cal['no']} No).")
+    if cal["answers"] < cal["prior_answers"]:
+        basis += (" So far that's mostly the typical curve: a lucky run of answers can't swing it, and more "
+                  "checks make it yours.")
+    elif not cal["known_typical"]:
+        basis += " BEX has no typical curve for this model, so your answers carry it."
+    st.caption(basis + f" Model score floor: {row['floor']:.3f}. Recall is of the calls the model detects at all: "
                "calls it never noticed can't be kept.")
     if st.button("Use this", type="primary"):
         save(d, floor=row["floor"], target_recall=target)
@@ -738,25 +937,47 @@ def share_form(d: str, s: dict) -> None:
         st.warning("The terms have changed since you agreed: tick again to agree to the new version.")
 
 
+def protocol_rows(d: str, s: dict, kept_crowd: pl.DataFrame, p) -> None:
+    """The protocols as rows, styled like the species table: what each tells
+    you, the detections volunteers would check (a bar), their answers and
+    time, and a button to choose it (the chosen one outlined)."""
+    est = {n: E.estimate_protocol(kept_crowd, p, proto) for n, proto in PROTOCOL_CHOICES.items()}
+    top = max((e["checks"] for e in est.values()), default=1)
+    cur = next((n for n, v in PROTOCOL_CHOICES.items() if v == s["protocol"]), next(iter(PROTOCOL_CHOICES)))
+    st.markdown(PIP_CSS + ROW_CSS + "<style>"
+                + "".join(f".st-key-eco_proto_{i}{{border:1.5px solid {COL['primary'] if n == cur else 'transparent'};"
+                          "border-radius:10px;padding:0.3rem 0.5rem}"
+                          for i, n in enumerate(PROTOCOL_CHOICES)) + "</style>", unsafe_allow_html=True)
+    widths = [3.2, 2.2, 1.9, 1.0]
+    for h, c in zip(["Protocol", "Detections checked", "Volunteer answers (time)", ""],
+                    st.columns(widths, vertical_alignment="center")):
+        c.caption(h)
+    for i, (n, e) in enumerate(est.items()):
+        with st.container(key=f"eco_proto_{i}"):
+            c = st.columns(widths, vertical_alignment="center")
+            c[0].markdown(f"**{n}**<br><span class='eco-sci' style='font-style:normal'>"
+                          f"{E.PROTOCOLS[PROTOCOL_CHOICES[n]['mode']]}</span>", unsafe_allow_html=True)
+            c[1].markdown(count_bar(e["checks"], top), unsafe_allow_html=True)
+            lo, hi = e["answers"]
+            hours = (lo * E.SECONDS_PER_ANSWER / 3600, hi * E.SECONDS_PER_ANSWER / 3600)
+            c[2].markdown(f"{lo:,}–{hi:,}<br><span class='eco-sci' style='font-style:normal'>"
+                          f"{hours[0]:,.0f}–{hours[1]:,.0f} h</span>", unsafe_allow_html=True)
+            if n == cur:
+                c[3].button("✓ Chosen", key=f"eco_proto_pick_{i}", disabled=True, width="stretch")
+            else:
+                c[3].button("Choose", key=f"eco_proto_pick_{i}", width="stretch",
+                            on_click=lambda n=n: save(d, protocol=PROTOCOL_CHOICES[n]))
+    st.caption("You can change it later in the EcoLabel portal.")
+
+
 def export_ecolabel(d: str, s: dict, kept: pl.DataFrame, checks: pl.DataFrame) -> None:
     st.caption("Volunteers in the EcoLabel app check the detections for you, and their skill-weighted answers "
                "settle each one. Only short clips around detections leave this computer.")
     st.markdown("##### 1 · Survey protocol")
-    kept_crowd = kept.filter(~pl.col("unexpected")).join(checks.select(E.KEY), on=E.KEY, how="anti")
-    p = E.calibrate(kept_crowd, checks)
-    rows = []
-    for name, proto in PROTOCOL_CHOICES.items():
-        est = E.estimate_protocol(kept_crowd, p, proto)
-        rows.append({"Protocol": name, "What it tells you": E.PROTOCOLS[proto["mode"]],
-                     "Detections checked": est["checks"],
-                     "Volunteer answers": f"{est['answers'][0]:,}–{est['answers'][1]:,}"})
-    st.dataframe(pl.DataFrame(rows).to_pandas(), hide_index=True, width="stretch")
-    names = list(PROTOCOL_CHOICES)
-    cur = next((n for n, v in PROTOCOL_CHOICES.items() if v == s["protocol"]), names[0])
-    pick = st.radio("Protocol", names, index=names.index(cur), horizontal=True,
-                    help="You can change it later in the EcoLabel portal.")
-    if PROTOCOL_CHOICES[pick] != s["protocol"]:
-        save(d, protocol=PROTOCOL_CHOICES[pick])
+    kept_crowd = (kept.filter(~pl.col("unexpected"), ~pl.col("researcher"))
+                  .join(checks.select(E.KEY), on=E.KEY, how="anti"))
+    p = E.calibrate(kept_crowd, checks, E.typical_for(cfg.store_dir, s["run_id"]))
+    protocol_rows(d, s, kept_crowd, p)
     st.caption("“Which species are there” and “Activity” stop asking about a species once it's confirmed, and "
                "if its best detections all come back No, ask you to confirm it's absent.")
 
@@ -789,10 +1010,22 @@ def export_ecolabel(d: str, s: dict, kept: pl.DataFrame, checks: pl.DataFrame) -
                       f"{r['references']} examples, {r['ready_species']} of {r['species']} species ready for "
                       "volunteers" if r else ""))
         st.caption(f"`{z}`")
-    server = st.text_input("EcoLabel server", server_url())
-    key = st.text_input("Your access key", type="password", help="From EcoLabel. Kept for this session only.",
-                        key="eco_key")
-    if st.button("Send to EcoLabel", type="primary", disabled=not (z.exists() and key)):
+    send, down = st.columns(2, gap="medium")
+    with down.container(border=True):
+        st.markdown("**Or download it**")
+        st.caption("The bundle as one file, to upload yourself in the EcoLabel portal (Home → New project → "
+                   "Upload a bundle), or to keep.")
+        st.download_button(f"⬇ Download {z.name}" if z.exists() else "⬇ Download the bundle",
+                           (lambda: z.read_bytes()) if z.exists() else b"", file_name=z.name,
+                           mime="application/zip", disabled=not z.exists(), width="stretch",
+                           help=None if z.exists() else "Build the bundle first")
+    with send.container(border=True):
+        st.markdown("**Send it to EcoLabel**")
+        server = st.text_input("EcoLabel server", server_url())
+        key = st.text_input("Your access key", type="password", help="From EcoLabel. Kept for this session only.",
+                            key="eco_key")
+        go_send = st.button("Send to EcoLabel", type="primary", disabled=not (z.exists() and key), width="stretch")
+    if go_send:
         prefs.put(cfg.store_dir, "ecolabel_server", server)
         bar = st.progress(0.0, text="Starting…")
         try:

@@ -135,14 +135,14 @@ GUIDES: dict[str, list[tuple[str, str, str]]] = {
 }
 
 _STYLE = """<style>
-@keyframes bexpulse { 0% {box-shadow:0 0 0 0 rgba(62,106,107,.55)}
-                      70% {box-shadow:0 0 0 12px rgba(62,106,107,0)}
-                      100% {box-shadow:0 0 0 0 rgba(62,106,107,0)} }
-@@TARGET@@ { outline:3px solid #3e6a6b !important; outline-offset:5px;
+@keyframes bexpulse { 0% {box-shadow:0 0 0 0 rgba(140,199,154,.55)}
+                      70% {box-shadow:0 0 0 12px rgba(140,199,154,0)}
+                      100% {box-shadow:0 0 0 0 rgba(140,199,154,0)} }
+@@TARGET@@ { outline:3px solid @@PRIMARY@@ !important; outline-offset:5px;
              border-radius:6px; animation:bexpulse 1.6s ease-out infinite; }
 .st-key-bex_guide { position:fixed; right:22px; bottom:22px; width:360px;
                     z-index:999999; background:@@BG@@;
-                    border:2px solid #3e6a6b; border-radius:12px;
+                    border:2px solid @@PRIMARY@@; border-radius:12px;
                     box-shadow:0 8px 28px rgba(0,0,0,.18);
                     padding:0.9rem 1rem 0.6rem; }
 </style>"""
@@ -179,9 +179,10 @@ def show(page: str) -> None:
         return
     i = max(0, min(i, len(steps) - 1))
     selector, title, text = steps[i]
-    dark = (getattr(st.context.theme, "type", None) or "light") == "dark"
-    st.markdown(_STYLE.replace("@@TARGET@@", selector)
-                      .replace("@@BG@@", "#0e1117" if dark else "#ffffff"),
+    from bex.theme import colours
+    c = colours()
+    st.markdown(_STYLE.replace("@@TARGET@@", selector).replace("@@PRIMARY@@", c["primary"])
+                      .replace("@@BG@@", c["card"]),
                 unsafe_allow_html=True)
     with st.container(key="bex_guide"):
         st.caption(f"🧭 Guide · {i + 1} of {len(steps)}")

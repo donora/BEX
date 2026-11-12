@@ -26,9 +26,11 @@ from . import ingest, melcache
 from .config import load_config
 
 
-# The BEX accent (a muted petrol teal; V1.md HM1) passed as flags, because
-# Streamlit reads .streamlit/config.toml from the working directory, not the app's.
-THEME = ["--theme.light.primaryColor=#3e6a6b", "--theme.dark.primaryColor=#4f868c"]
+# EcoLabel's palette (bex/theme.py) passed as flags, because Streamlit reads
+# .streamlit/config.toml from the working directory, not the app's.
+from .theme import flags as _theme_flags  # noqa: E402
+
+THEME = _theme_flags()
 
 
 def _init(folder: Path) -> int:
@@ -93,6 +95,14 @@ def main(argv: list[str] | None = None) -> int:
     p_ex.add_argument("--out", default=".", help="folder to write the bundle into (default: here)")
     p_ex.add_argument("--no-zip", action="store_true", help="leave the bundle as a folder")
 
+    p_im = sub.add_parser("import-detections",
+                          help="import your own model's detections (CSV/Parquet) as a run: see `bex.byom`")
+    p_im.add_argument("dataset")
+    p_im.add_argument("file", help="CSV or Parquet: recording, start_s, end_s, species, score (0-1)")
+    p_im.add_argument("--model", required=True, help="a short name for the model, e.g. mynet")
+    p_im.add_argument("--version", default="1")
+    p_im.add_argument("--window", type=float, default=None, help="window length (s), if the table has no end column")
+
     p_up = sub.add_parser("upload", help="send an EcoLabel bundle (.zip) to an EcoLabel server")
     p_up.add_argument("bundle", help="the .ecolabel.zip file")
     p_up.add_argument("--server", default=os.environ.get("ECOLABEL_SERVER", "http://localhost:8000"))
@@ -140,6 +150,19 @@ def main(argv: list[str] | None = None) -> int:
                                  audio_root=os.path.abspath(args.dir))
         hours = recordings["duration_s"].sum() / 3600
         print(f"{args.name}: {len(recordings)} recordings, {hours:.1f} h -> {d}")
+
+    elif args.command == "import-detections":
+        from . import byom
+        try:
+            r = byom.import_detections(cfg.store_dir, args.dataset, byom.read_table(args.file), args.model,
+                                       args.version, args.window)
+        except byom.ImportProblem as err:
+            print(f"Can't import {args.file}:\n{err}")
+            return 1
+        print(f"{r['run_id']}: {r['rows']:,} detections, {r['recordings']} of {r['of_recordings']} recordings, "
+              f"{r['species']} species, {r['window_s']:g} s windows")
+        for w in r["warnings"]:
+            print("  note:", w)
 
     elif args.command == "export-ecolabel":
         from . import ecolabel

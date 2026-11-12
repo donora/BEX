@@ -12,6 +12,9 @@ import streamlit as st
 
 st.set_page_config(page_title="BEX — Bioacoustics Explorer", page_icon="🐦",
                    layout="wide")
+from bex import theme as _theme  # noqa: E402
+
+st.markdown(_theme.css(), unsafe_allow_html=True)
 
 def app_mode() -> str:
     """Simple (the guided path: recordings to checked detections, exported as a
@@ -58,9 +61,11 @@ def simple_bar() -> None:
     """Simple mode: one guided page, About, and the way to the rest of BEX."""
     st.markdown("<style>[data-testid='stMainBlockContainer']{padding-top:3.2rem}</style>",
                 unsafe_allow_html=True)
+    from ui.common import logo_html
     with st.container(key="bex_nav"):
-        a, _, b, c = st.columns([2.2, 4, 1.4, 0.8], vertical_alignment="center")
-        a.page_link(PAGES["guided"], label="**BEX** · Simple mode")
+        a, _, b, c = st.columns([3.2, 3, 1.4, 0.8], vertical_alignment="center")
+        a.markdown(f"<a href='./guided' target='_self' style='text-decoration:none'>"
+                   f"{logo_html(2.6, 'Simple mode')}</a>", unsafe_allow_html=True)
         if b.button("Research mode ›", help="All of BEX: labelling, the Explorer, comparing models…"):
             set_mode("research")
             st.switch_page(PAGES["home"])
@@ -75,10 +80,9 @@ def nav_bar() -> None:
         return simple_bar()
     from ui.common import brand
     c = brand()
-    # The accent pill is the light theme's petrol teal with white text in both
-    # themes: the dark theme's lighter teal would need dark text, which reads as
-    # disabled on a dark page.
-    accent, accent_deep = "#3e6a6b", "#2f5657"
+    # The steps in EcoLabel's primary green, with its own text colour on it.
+    pal = _theme.colours()
+    accent, accent_deep, on_accent = pal["primary"], pal["primary_deep"], pal["on_primary"]
     st.markdown(
         "<style>"
         # The bar replaces Streamlit's header nav, so less space above it.
@@ -98,7 +102,7 @@ def nav_bar() -> None:
             f"background:{accent}; border-radius:8px}}"
             f".st-key-nav_step{i} [data-testid='stPageLink'] a *,"
             f".st-key-nav_step{i} [data-testid='stPopover'] button *"
-            "{color:#ffffff !important}"
+            f"{{color:{on_accent} !important}}"
             f".st-key-nav_step{i} [data-testid='stPageLink'] a:hover,"
             f".st-key-nav_step{i} [data-testid='stPopover'] button:hover{{"
             f"background:{accent_deep}}}"
