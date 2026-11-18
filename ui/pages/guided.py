@@ -66,6 +66,8 @@ def server_url() -> str:
 def library(d: str) -> dict:
     """EcoLabel's shared library, per species (asked at most every 10 minutes;
     {} when the server can't be reached, and then everything is checked here)."""
+    if not E.is_open():
+        return {}
     k = f"eco_lib_{server_url()}"
     got = st.session_state.get(k)
     if got is None or time.time() - got[0] > 600:
@@ -718,8 +720,10 @@ def compare(d: str, key: str, pool: pl.DataFrame, checks: pl.DataFrame) -> None:
     st.markdown("**Compare with**")
     own = (checks.filter(pl.col("species_key") == key, pl.col("verdict") == "yes")
            .join(pool.select(*E.KEY, "end_s", "score"), on=E.KEY).sort("score", descending=True).head(3))
-    lib = library_examples(server_url(), key)
-    mine, theirs, elsewhere = st.tabs([f"Your Yes ({own.height})", f"📚 Library ({len(lib)})", "Elsewhere"])
+    lib = library_examples(server_url(), key) if E.is_open() else None
+    names = [f"Your Yes ({own.height})"] + ([f"📚 Library ({len(lib)})"] if lib is not None else []) + ["Elsewhere"]
+    tabs = st.tabs(names)
+    mine, elsewhere = tabs[0], tabs[-1]
     with mine:
         if own.height == 0:
             st.caption("Answer Yes to a clear call and it appears here, to compare the next ones with.")
@@ -728,14 +732,15 @@ def compare(d: str, key: str, pool: pl.DataFrame, checks: pl.DataFrame) -> None:
             wav, png = clip_media(str(src), max(0.0, r["start_s"] - 0.5), r["end_s"] + 0.5, r["start_s"], r["end_s"])
             st.image(png, width="stretch")
             st.audio(wav, format="audio/wav")
-    with theirs:
-        if not lib:
-            st.caption("EcoLabel's species library has no examples of this one yet (or the server isn't "
-                       "reachable).")
-        for e in lib:
-            st.image(e["image"], width="stretch")
-            st.audio(e["audio"], format="audio/mpeg")
-            st.caption(f"From {e['credit']} ({e['licence'].upper()})")
+    if lib is not None:                  # EcoLabel's library: only once EcoLabel is open
+        with tabs[1]:
+            if not lib:
+                st.caption("EcoLabel's species library has no examples of this one yet (or the server isn't "
+                           "reachable).")
+            for e in lib:
+                st.image(e["image"], width="stretch")
+                st.audio(e["audio"], format="audio/mpeg")
+                st.caption(f"From {e['credit']} ({e['licence'].upper()})")
     with elsewhere:
         st.markdown("  \n".join(f"[{name} ↗]({url})" for name, url in E.reference_links(key).items()))
         st.caption("Recordings by others, on their sites. Useful for hearing the species, but they can't count "
@@ -1044,6 +1049,27 @@ def export_ecolabel(d: str, s: dict, kept: pl.DataFrame, checks: pl.DataFrame) -
     st.caption(f"From the command line: `bex export-ecolabel {d}` then `bex upload {d}.ecolabel.zip --key …`")
 
 
+def ecolabel_coming_soon(kept: pl.DataFrame) -> None:
+    """EcoLabel isn't public yet: what sending will look like, greyed out, and
+    who to ask (BEX_ECOLABEL=1 turns the real thing on for early access)."""
+    st.info(f"**EcoLabel is coming soon.** Volunteers will check your {kept.height:,} detections by ear on "
+            "their phones, with each answer weighted by how reliable that listener has proved. For questions "
+            f"or early access, email [{E.CONTACT}](mailto:{E.CONTACT}).", icon="🌿")
+    st.markdown("<style>.st-key-eco_soon{opacity:0.45;pointer-events:none}</style>", unsafe_allow_html=True)
+    with st.container(key="eco_soon", border=True):
+        for head, text in (("1 · Survey protocol", "How much to ask: which species are there, activity per "
+                            "block of time, or every call, each with its cost in volunteer answers."),
+                           ("2 · About the project", "A title, summary and your group, shown to volunteers "
+                            "beside every clip."),
+                           ("3 · Share with the species library", "Optional: your confirmed clips help other "
+                            "projects, credited to you."),
+                           ("4 · Build and send", "Short clips around each detection, never whole recordings "
+                            "or coordinates. It arrives as a draft for you to launch.")):
+            st.markdown(f"##### {head}")
+            st.caption(text)
+        st.button("Send to EcoLabel · coming soon", disabled=True, width="stretch", key="eco_soon_send")
+
+
 def export_file(d: str, kept: pl.DataFrame, checks: pl.DataFrame, names: dict[str, str]) -> None:
     st.caption("Every detection kept at your recall target, with your own answers where you gave one: for a "
                "spreadsheet, R or Python.")
@@ -1066,9 +1092,12 @@ def step_export(d: str) -> None:
     checks = E.load_checks(cfg.store_dir, d)
     kept = E.kept_candidates(pool, sp, checks, s.get("floor"))
     names = dict(zip(sp["species_key"], sp["name"]))
-    eco, file = st.tabs(["🌿 Send to EcoLabel volunteers", "⬇️ Detections file"])
+    if E.is_open():
+        eco, file = st.tabs(["🌿 Send to EcoLabel volunteers", "⬇️ Detections file"])
+    else:
+        file, eco = st.tabs(["⬇️ Detections file", "🌿 EcoLabel volunteers · coming soon"])
     with eco:
-        export_ecolabel(d, s, kept, checks)
+        export_ecolabel(d, s, kept, checks) if E.is_open() else ecolabel_coming_soon(kept)
     with file:
         export_file(d, kept, checks, names)
     nav("Recall", None)

@@ -264,3 +264,25 @@ def test_a_known_model_has_an_estimate_before_any_answers(project):
     assert band["kept_mid"].is_sorted()                           # more recall, more to check
     lo, hi = E.volunteer_hours(1000)
     assert 0 < lo < hi
+
+
+def store_parent(cfg) -> Path:
+    return Path(cfg.store_dir).resolve().parent
+
+
+def test_the_species_list_follows_the_dataset_then_its_runs(project):
+    """No list on the dataset: the one its runs were made with, not the config's
+    default (the SNE demo, made by `bex ingest-sne`, once got the UK list)."""
+    from dataclasses import replace
+    from bex import flow
+    store, prof = Path(project.store_dir), store_parent(project) / "test-profiles"
+    for name, key in (("uk-ish", "Erithacus rubecula"), ("ca-ish", "Turdus migratorius")):
+        (prof / name).mkdir(parents=True)
+        (prof / name / "tiers.csv").write_text(f"species_key,tier\n{key},1\n")
+    cfg = replace(project, profiles_dir=str(prof), default_profile="uk-ish")
+    assert E._tiers(cfg, "demo")[1].name == "uk-ish"              # nothing else to go on
+    man = store / "runs" / RUN / "manifest.json"
+    man.write_text(json.dumps({**json.loads(man.read_text()), "profile": "ca-ish"}))
+    assert E._tiers(cfg, "demo")[1].name == "ca-ish"              # the runs' list
+    flow.set_dataset_meta(store, "demo", profile="uk-ish")
+    assert E._tiers(cfg, "demo")[1].name == "uk-ish"              # the dataset's own wins

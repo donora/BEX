@@ -140,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "ingest-sne":
         recordings, ann = ingest.ingest_sne(cfg.labels_dir, cfg.audio_dir)
         d = ingest.write_dataset(cfg.store_dir, "sne", recordings, ann, audio_root=cfg.audio_dir)
+        from bex import flow
+        flow.set_dataset_meta(cfg.store_dir, "sne", profile="us-ca-sierra")   # Sierra Nevada, California
         print(f"sne: {len(recordings)} recordings, {len(ann)} annotations -> {d}")
 
     elif args.command == "scan":

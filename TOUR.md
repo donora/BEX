@@ -18,6 +18,111 @@ time: **labelled data, scored** (only what has been labelled, every number
 judged against the labels) or **all recordings, unscored** (what the models
 report everywhere, with no right or wrong).
 
+BEX has two modes. **Simple mode** is one guided page, from a folder of
+recordings to checked detections, and is where a new install opens. **Research
+mode** is everything else on this tour. Switch at any time: *Research mode ›*
+in Simple mode's top bar, or *🌿 Simple mode* in Research mode's setup menu.
+
+---
+
+## Simple mode
+
+Six steps, left to right, each a button you can go back to. A tick means a
+step is done. These screenshots are of the Sierra Nevada set part-way through,
+with the answers in step 4 taken from its expert labels.
+
+![Simple mode: a new project](docs/tour/simple-start.png)
+
+1. **The six steps**: *Recordings → Model → Species → Check → Recall → Export*.
+2. **Project**: carry on with one you have, or start a new one.
+3. **A new project**: a folder of recordings (they stay where they are), a
+   name, and a location, used only to pick the region's species list.
+4. **Research mode ›**: the rest of BEX.
+
+**Model.** Use a run you already have, or run a new one: Perch by default, or
+BirdNET (with a note that its licence is non-commercial), or import your own
+model's detections, with a how-to and an example file.
+
+### Species
+
+![Species on the region's list](docs/tour/simple-species.png)
+
+1. **On this region's species list**: each window's top three species, ticked
+   if the region's list says they can be here. Each needs a common name. Bars
+   show how many detections, pips how sure the best one is.
+2. **Researcher checks**: mark species with only a few detections to look at
+   yourself.
+
+![Species the model was sure of, but that aren't on the list](docs/tour/simple-unexpected.png)
+
+1. **Unexpected here**: the model was confident, but the species isn't on the
+   region's list. Most are mistakes, often a similar-sounding species (Perch
+   hears Tawny Owl in the Sierra Nevada thousands of times), but one could be a
+   real surprise: tick it to look at it yourself. Low-scoring off-list species
+   are folded away below as probably noise.
+
+### Check
+
+![Check: every species at a glance](docs/tour/simple-check.png)
+
+1. **Where things stand**: species ready, your answers so far, and whether
+   there are enough for a recall estimate (20 clear answers).
+2. **Carry on checking**: starts with the busiest species that still needs
+   answers, and moves on by itself when one is ready.
+3. **The pips**: green for each Yes, orange for each No, hollow for those still
+   needed.
+4. **A species**: 5 Yes and 3 No make it ready. Click *Check ›* to work on it.
+5. **Expert labels**: a label set made in Research mode can count as answers.
+
+![Check: one detection at a time](docs/tour/simple-checking.png)
+
+1. **The detection**: its spectrogram, with the model's window bright, and the
+   clip, which plays by itself.
+2. **Is this a …?** *Yes*, *No*, or *Not sure* (only clear answers count).
+3. **Next species** and **Undo last**.
+4. **Compare with**: your own earlier Yeses for this species, and links to
+   Xeno-canto and iNaturalist sounds.
+
+### Recall
+
+![Recall: how much to keep](docs/tour/simple-recall.png)
+
+1. **Aim for recall of**: the share of real calls to keep, of those the model
+   can find at all.
+2. **What it costs**: detections kept, how many of them are likely false, and
+   (with EcoLabel) the volunteer time to check them all. Hover for the likely
+   range.
+3. **The cost curve**: real calls (green) and false detections (orange) kept at
+   each recall. Near the top the cost climbs steeply: the last calls hide among
+   many false detections.
+4. **What it's based on**: how this model typically does, and your answers,
+   which outweigh it the more you give. The score floor is what your recall
+   target becomes.
+5. **Use this**: keeps the target and moves on to Export.
+
+Tested against SNE's expert labels, aiming for 80% recall gave 79%, with 18
+false detections per 100 against an estimate of 16.
+
+### Export
+
+![Export: the detections file](docs/tour/simple-export.png)
+
+1. **Detections file**: every detection kept at your recall target.
+2. **The table**: recording, time, species (scientific and common name),
+   score, whether it was unexpected, and your own answer where you gave one.
+3. **Download** it as a CSV, for a spreadsheet, R or Python.
+4. **EcoLabel volunteers**: coming soon.
+
+![EcoLabel: coming soon](docs/tour/simple-soon.png)
+
+1. **EcoLabel** is a companion app, not yet public, in which volunteers check
+   detections by ear on their phones, with each answer weighted by how
+   reliable that listener has proved. For questions or early access, email
+   [mara@melusine.uk](mailto:mara@melusine.uk).
+2. **What sending will look like**: a survey protocol, a description of the
+   project, optional sharing with EcoLabel's species library, then a bundle
+   of short clips (never whole recordings or coordinates).
+
 ---
 
 ## Home
@@ -38,8 +143,7 @@ report everywhere, with no right or wrong).
    under way; the outlined step is the next one. Hover a step for detail.
 5. **Continue** goes to the next step. *Label* and *Explore* are
    always there: neither closes off the other.
-6. **A dataset part-way through labelling**: three recordings started (green
-   outline), a few minutes in each.
+6. **Another dataset**: each keeps its own labels, progress and next step.
 7. **Profile, spectrograms and models**: the dataset's plausibility profile,
    its spectrograms and its model runs, each with a progress bar and a button.
    For a new dataset these sit open in the card until they are done; a file the

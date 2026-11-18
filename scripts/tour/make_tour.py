@@ -17,6 +17,7 @@ is missing is reported and left out.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -100,6 +101,37 @@ SHOTS = {
         M(".st-key-sv_save_model"), M("blockquote"), M(".st-key-sv_apply_go"),
         M(".st-key-sv_apply_summary"), M(".st-key-sv_apply_table"),
         M(".st-key-sv_apply_dl")])],
+    # Simple mode (a second app server, BEX_MODE=simple; sne staged by simple_demo)
+    "simple-new.png": [("simple-start.png", dict(sels=[".st-key-bex_nav", "[data-testid='stForm']"], pad=26), [
+        M(".st-key-eco_stepper"), M(".st-key-eco_pick"), M("[data-testid='stForm']"),
+        M("button:has-text('Research mode')")])],
+    "simple-species.png": [
+        ("simple-species.png", dict(sels=[".st-key-eco_stepper", "text=Researcher checks"], pad=26,
+                                    extra_bottom=430), [
+            M("text=On this region's species list"), M("text=Researcher checks")]),
+        ("simple-unexpected.png", dict(sels=["text=/Unexpected here:/"], pad=26, extra_bottom=330,
+                                       full_width=True), [
+            M("text=/Unexpected here:/")])],
+    "simple-check.png": [("simple-check.png", dict(
+        sels=[".st-key-eco_stepper", "text=Already have expert labels"], pad=26), [
+        M("[data-testid='stMetric']"), M("button:has-text('checking ›')"), M(".pip-legend"),
+        M("[class*='st-key-eco_row_']"), M("text=Already have expert labels")])],
+    "simple-checking.png": [("simple-checking.png", dict(
+        sels=[".st-key-eco_stepper", "button:has-text('Not sure')", "text=Compare with"], pad=26,
+        extra_bottom=60), [
+        M("[data-testid='stImage']"), M("text=/^Is this a /"), M("button:has-text('Undo last')", at="right"),
+        M("text=Compare with")])],
+    "simple-recall.png": [("simple-recall.png", dict(
+        sels=[".st-key-eco_stepper", "button:has-text('Use this')"], pad=26), [
+        M("[data-testid='stSlider']"), M("[data-testid='stMetric']"), M("text=Dashed lines"),
+        M("text=/Model score floor/"), M("button:has-text('Use this')")])],
+    "simple-export.png": [("simple-export.png", dict(
+        sels=[".st-key-eco_stepper", "button:has-text('detections (CSV)')"], pad=26), [
+        M("text=Detections file"), M("[data-testid='stDataFrame']"),
+        M("button:has-text('detections (CSV)')"), M("text=EcoLabel volunteers · coming soon", at="right")])],
+    "simple-soon.png": [("simple-soon.png", dict(
+        sels=["text=EcoLabel is coming soon", ".st-key-eco_soon"], pad=26), [
+        M("text=EcoLabel is coming soon"), M(".st-key-eco_soon")])],
 }
 
 
@@ -147,6 +179,51 @@ def demo_set(cfg) -> dict:
             "y2": fy(b["low_hz"]), "set": SET, "setup": SETUP}
 
 
+def simple_demo(cfg) -> None:
+    """Simple mode part-way through on sne: the on-list species ticked and
+    named, the busiest eight answered (5 Yes, 3 No each) and three more begun,
+    every answer taken from SNE's expert labels, and a project description.
+    sne's ecolabel folder is backed up first and put back by cleanup()."""
+    from bex import ecolabel as E
+    src = E.folder(cfg.store_dir, DATASET)
+    shutil.rmtree(RAW / "ecolabel-backup", ignore_errors=True)
+    shutil.copytree(src, RAW / "ecolabel-backup")
+    s = E.load_settings(cfg.store_dir, DATASET)
+    run = s["run_id"] or E.runs_for(cfg.store_dir, DATASET)[0]["run_id"]
+    pool = E.candidate_pool(cfg.store_dir, DATASET, run)
+    tiers, pdir = E._tiers(cfg, DATASET)
+    sp = E.species_table(pool, tiers, E.common_names(cfg.store_dir, pdir), {**s, "included": None})
+    keep = sp.filter(pl.col("plausible"), pl.col("name").str.len_chars() > 0)
+    _, ann = read_dataset(cfg.store_dir, DATASET)
+    real = (pool.join(ann.select("recording_id", "species_key", b0="start_s", b1="end_s"),
+                      on=["recording_id", "species_key"])
+            .filter(pl.min_horizontal("end_s", "b1") - pl.max_horizontal("start_s", "b0") >= 0.5)
+            .select(E.KEY).unique().with_columns(real=pl.lit(True)))
+    cand = pool.join(real, on=E.KEY, how="left").with_columns(pl.col("real").fill_null(False))
+    (src / "checks.parquet").unlink(missing_ok=True)
+    for i, k in enumerate(keep["species_key"].head(11)):
+        need = {"yes": 5, "no": 3} if i < 8 else {"yes": 2, "no": 1}
+        for r in cand.filter(pl.col("species_key") == k).sort("score", descending=True).iter_rows(named=True):
+            v = "yes" if r["real"] else "no"
+            if need[v]:
+                E.add_check(cfg.store_dir, DATASET, r["recording_id"], r["start_s"], k, v, labeller="Mara")
+                need[v] -= 1
+            if not any(need.values()):
+                break
+    about = s["about"]
+    about["project"].update(title="Dawn chorus, Sierra Nevada (BEX demo)",
+                            summary="Which birds sing at dawn in the Sierra Nevada mountains of California.",
+                            why="To see how bird life changes up the mountain.")
+    about["group"].update(name="BEX demo", kind="Example project")
+    about["site"].update(name="Sierra Nevada, California", habitat="mixed conifer forest",
+                         when="Mornings in May and June 2018")
+    E.save_settings(cfg.store_dir, DATASET, {**s, "run_id": run, "floor": None, "target_recall": 0.8,
+                                             "included": keep["species_key"].to_list(),
+                                             "names": dict(zip(keep["species_key"], keep["name"])),
+                                             "about": about})
+    print(f"simple demo: {keep.height} species, {E.load_checks(cfg.store_dir, DATASET).height} answers")
+
+
 def annotate(pts: dict) -> None:
     try:
         font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 17)
@@ -190,6 +267,12 @@ def annotate(pts: dict) -> None:
 
 
 def cleanup(cfg) -> None:
+    backup = RAW / "ecolabel-backup"
+    if backup.exists():
+        dst = Path(cfg.store_dir) / "datasets" / DATASET / "ecolabel"
+        shutil.rmtree(dst, ignore_errors=True)
+        shutil.copytree(backup, dst)
+        shutil.rmtree(backup)
     shutil.rmtree(L.set_dir(cfg.store_dir, DATASET, SET), ignore_errors=True)
     for p in (Path(cfg.store_dir) / "truth" / DATASET / "sets").glob(f"{SET}@*"):
         shutil.rmtree(p, ignore_errors=True)
@@ -207,9 +290,12 @@ def main() -> int:
     RAW.mkdir(exist_ok=True)
     prefs = Path(cfg.store_dir) / "ui_prefs.json"
     prefs_before = prefs.read_text() if prefs.exists() else None
-    server = subprocess.Popen([sys.executable, "-m", "streamlit", "run", str(REPO / "app.py"),
-                               "--server.port", str(PORT), "--server.headless", "true"],
-                              cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def serve(port: int, mode: str) -> subprocess.Popen:
+        return subprocess.Popen([sys.executable, "-m", "streamlit", "run", str(REPO / "app.py"),
+                                 "--server.port", str(port), "--server.headless", "true"],
+                                cwd=REPO, env={**os.environ, "BEX_MODE": mode},
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    server, simple = serve(PORT, "research"), None
     try:
         time.sleep(6)
         (RAW / "measure.json").write_text(json.dumps(measure_spec(), indent=1))
@@ -218,9 +304,15 @@ def main() -> int:
         pts = demo_set(cfg)
         (RAW / "pts.json").write_text(json.dumps(pts))
         subprocess.run([*node, "rest", str(PORT), str(RAW)], cwd=HERE, check=True)
+        simple_demo(cfg)
+        simple = serve(PORT + 1, "simple")
+        time.sleep(6)
+        subprocess.run([*node, "simple", str(PORT + 1), str(RAW)], cwd=HERE, check=True)
         annotate(pts)
     finally:
         server.terminate()
+        if simple:
+            simple.terminate()
         cleanup(cfg)
         if prefs_before is None:
             prefs.unlink(missing_ok=True)

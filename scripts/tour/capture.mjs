@@ -2,6 +2,7 @@
 // Run by make_tour.py:  node capture.mjs <stage> <port> <outdir>
 //   stage "home":  the Home page (before the demo label set exists)
 //   stage "rest":  Label (with the demo set), Explorer, Compare, Survey (save + apply)
+//   stage "simple": Simple mode on sne, staged by make_tour.py's simple_demo
 import { chromium } from 'playwright-core';
 import fs from 'fs';
 import path from 'path';
@@ -32,16 +33,19 @@ async function closeWelcome() {
 }
 
 if (stage === 'home') {
+  await p.setViewportSize({ width: 1500, height: 2800 });   // room for every dataset card
   await p.goto(url('')); await p.getByText('Your datasets').first().waitFor({ timeout: 120000 });
   await settle(4000); await closeWelcome();
   await save('home.png'); log('home');
-} else {
+} else if (stage === 'rest') {
   const pts = JSON.parse(fs.readFileSync(path.join(out, 'pts.json')));
   // Label: draw a box over a call the experts labelled, and ask for suggestions.
   await p.setViewportSize({ width: 1500, height: 2300 });
   await p.goto(url('label')); await p.getByText('Label set you are working on').first().waitFor({ timeout: 120000 });
   await settle(5000);
-  await p.getByRole('textbox', { name: 'Your name' }).fill('Mara'); await p.keyboard.press('Enter'); await settle(4000);
+  // Your name: a choose-or-type dropdown
+  await p.getByRole('combobox', { name: /Your name/ }).click(); await p.keyboard.type('Mara');
+  await p.keyboard.press('Enter'); await settle(4000);
   if (!(await p.getByText(pts.set).first().isVisible())) {
     await p.getByRole('combobox', { name: /Label set you are working on/ }).click();
     await p.getByRole('option', { name: pts.set }).click(); await settle(9000);
@@ -74,5 +78,30 @@ if (stage === 'home') {
   await p.getByRole('button', { name: 'Save setup' }).click(); await settle(10000);
   await p.getByRole('button', { name: 'Apply to every recording' }).click(); await settle(25000);
   await save('survey-full.png'); log('survey');
+} else if (stage === 'simple') {
+  const step = async (i) => { await p.locator(`.st-key-eco_st_${i} button`).click(); await settle(7000); };
+  const project = async (name) => {
+    await p.getByRole('combobox', { name: 'Project' }).click();
+    await p.getByRole('option', { name, exact: true }).click(); await settle(9000);
+  };
+  await p.setViewportSize({ width: 1500, height: 1300 });
+  await p.goto(url('')); await p.locator('.st-key-eco_stepper').waitFor({ timeout: 120000 });
+  await settle(5000);
+  if (!(await p.locator("[data-testid='stForm']").count())) await project('➕ New project from a folder…');
+  await save('simple-new.png'); log('simple: new project');
+  await project('sne');
+  await p.setViewportSize({ width: 1500, height: 4600 });
+  await step(2); await settle(8000); await save('simple-species.png'); log('simple: species');
+  await p.setViewportSize({ width: 1500, height: 1800 });
+  await step(3); await save('simple-check.png'); log('simple: check');
+  await p.getByRole('button', { name: /checking ›/ }).click(); await settle(12000);
+  await save('simple-checking.png'); log('simple: checking');
+  await p.setViewportSize({ width: 1500, height: 1500 });
+  await step(4); await settle(8000); await save('simple-recall.png'); log('simple: recall');
+  await p.setViewportSize({ width: 1500, height: 2400 });
+  await p.getByRole('button', { name: 'Use this' }).click(); await settle(9000);
+  await save('simple-export.png'); log('simple: export');
+  await p.getByText('EcoLabel volunteers · coming soon').click(); await settle(4000);
+  await save('simple-soon.png'); log('simple: coming soon');
 }
 await b.close();

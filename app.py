@@ -64,7 +64,7 @@ def simple_bar() -> None:
     from ui.common import logo_html
     with st.container(key="bex_nav"):
         a, _, b, c = st.columns([3.2, 3, 1.4, 0.8], vertical_alignment="center")
-        a.markdown(f"<a href='./guided' target='_self' style='text-decoration:none'>"
+        a.markdown(f"<a href='./' target='_self' style='text-decoration:none'>"
                    f"{logo_html(2.6, 'Simple mode')}</a>", unsafe_allow_html=True)
         if b.button("Research mode ›", help="All of BEX: labelling, the Explorer, comparing models…"):
             set_mode("research")

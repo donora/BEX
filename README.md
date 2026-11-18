@@ -77,22 +77,25 @@ from the top bar). Six steps, each a button in the bar across the top:
 4. **Check**: an overview of every species (dots for the Yes and No still
    needed), then check detections one at a time (Yes, No, Not sure, with
    undo) until each species has 5 Yes and 3 No. Beside each clip you can
-   play your own earlier Yeses, examples from EcoLabel's species library, and
-   links to Xeno-canto and iNaturalist sounds. EcoLabel volunteers each hear
-   3 of the Yeses as examples and are tested on the rest. Species EcoLabel's
-   shared library already covers need fewer, or none. A label set made in
-   Research mode can count too.
+   play your own earlier Yeses and follow links to Xeno-canto and iNaturalist
+   sounds. A label set made in Research mode can count too. (With EcoLabel,
+   below, volunteers each hear 3 of the Yeses as examples and are tested on
+   the rest, and species its shared library already covers need fewer.)
 5. **Recall**: your answers calibrate the model's scores, so "aim for 80%
    recall" becomes a score floor, with an estimate of the false detections per
    100 that costs. (Tested against SNE's expert labels: aiming for 80% gave
    79%, with 18 false per 100 against an estimate of 16.)
-6. **Export**: download the kept detections as a CSV, or send them to
-   [EcoLabel](https://github.com/donora), where volunteers check detections by
-   ear on their phones: choose a survey protocol (with its cost in volunteer
-   answers), describe the project, optionally share your confirmed clips with
-   EcoLabel's species library (under its published terms), and upload a bundle (short clips around
-   each detection, never whole recordings or coordinates) with your EcoLabel
-   access key. It arrives as a draft for you to launch.
+6. **Export**: download the kept detections as a CSV, for a spreadsheet, R
+   or Python. Sending them to EcoLabel volunteers is shown but greyed out
+   until EcoLabel opens (below).
+
+**EcoLabel: coming soon.** EcoLabel is a companion app, not yet public, in
+which volunteers check detections by ear on their phones, with their answers
+weighted by how reliable each listener has proved. From Simple mode's Export
+step you will choose a survey protocol (with its cost in volunteer answers),
+describe the project, and send a bundle of short clips around each detection
+(never whole recordings or coordinates). For questions or early access, email
+[mara@melusine.uk](mailto:mara@melusine.uk).
 
 **Your own model.** In the Model step, choose *Your own model* for a how-to
 and an example file: run your model however you like, save one table (CSV or
@@ -102,7 +105,7 @@ and says what to fix. From the command line:
 `bex import-detections my-site detections.csv --model mynet`. (For a model BEX
 should run itself each time, write a runner: `envs/README.md`.)
 
-Sending to EcoLabel from the command line, once steps 1 to 5 and the project description are done in the app:
+For EcoLabel early-access users, sending from the command line, once steps 1 to 5 and the project description are done in the app (and `BEX_ECOLABEL=1` turns the Export tab on):
 
 ```bash
 bex export-ecolabel my-site                 # -> my-site.ecolabel.zip

@@ -33,3 +33,6 @@ scripts/tour/raw/
 
 # Local model checkpoint pointer for the birdsong runner
 envs/birdsong/checkpoint.txt
+
+# macOS Finder metadata
+.DS_Store

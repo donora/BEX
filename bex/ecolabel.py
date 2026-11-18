@@ -54,6 +54,14 @@ POOL_FLOOR = {"birdnet": 0.05}        # plus a score floor, for models whose sco
 OCC_FLOOR, UNEXPECTED_SCORE = 0.005, 0.5   # permissive geofilter (models with one), and its exception
 ANSWERS_PER_CHECK = (5.6, 8.4)        # crowd answers per checked detection: a range (EcoLabel's experience)
 KEY = ["recording_id", "start_s", "species_key"]
+CONTACT = "mara@melusine.uk"          # EcoLabel questions and early access
+
+
+def is_open() -> bool:
+    """EcoLabel isn't public yet: BEX shows sending to it as coming soon, and
+    never contacts a server, unless BEX_ECOLABEL=1 (early-access users)."""
+    import os
+    return os.environ.get("BEX_ECOLABEL") == "1"
 
 PROTOCOLS = {
     "presence": "Which species are there: each species in each recording, confirmed once, best detections first.",
@@ -730,7 +738,10 @@ def build_bundle(cfg, dataset: str, out_dir: Path, progress=None) -> dict:
 def _tiers(cfg, dataset: str) -> tuple[dict[str, int] | None, Path | None]:
     meta = Path(cfg.store_dir) / "datasets" / dataset / "meta.json"
     name = json.loads(meta.read_text()).get("profile", "") if meta.exists() else ""
-    name = name or cfg.default_profile
+    # As Research mode does: the dataset's own list, then the one its runs were
+    # made with, then the config's (so the SNE demo never gets the UK list).
+    name = (name or next((r["profile"] for r in runs_for(cfg.store_dir, dataset) if r.get("profile")), "")
+            or cfg.default_profile)
     d = Path(cfg.profiles_dir) / name if name else None
     if not d or not (d / "tiers.csv").exists():
         return None, None

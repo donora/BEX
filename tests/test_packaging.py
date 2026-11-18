@@ -20,3 +20,9 @@ def test_the_packaged_assets_are_the_ones_in_the_folder():
     named = {Path(k).name for k in forced if k.startswith("assets/")}
     assert {p.name for p in (ROOT / "assets").iterdir()} == named, \
         "an unexpected file is in assets/: package it by name, or keep it elsewhere"
+
+
+def test_the_version_is_the_same_everywhere():
+    """EcoLabel bundles record bex.__version__; PyPI gets pyproject's."""
+    import bex
+    assert bex.__version__ == tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
